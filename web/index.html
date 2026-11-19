@@ -258,7 +258,7 @@
     <div class="drawer-head">
       <div>
         <h2 id="form-title">Nueva póliza</h2>
-        <p class="sub">Los campos con <span class="req">*</span> son obligatorios.</p>
+        <p class="sub">Ningún dato es obligatorio: completá solo lo que tengas.</p>
       </div>
       <button type="button" class="icon-btn" id="form-x" aria-label="Cerrar sin guardar"><svg class="ic"><use href="#i-x"/></svg></button>
     </div>
@@ -266,8 +266,8 @@
       <fieldset>
         <legend>Asegurado</legend>
         <div class="grid2">
-          <div class="field"><label for="f-nro_poliza">N° de póliza <span class="req">*</span></label><input id="f-nro_poliza" name="nro_poliza" required maxlength="60" class="mono" autofocus><small class="err" id="e-nro_poliza"></small></div>
-          <div class="field"><label for="f-asegurado">Asegurado <span class="req">*</span></label><input id="f-asegurado" name="asegurado" required maxlength="120"><small class="err" id="e-asegurado"></small></div>
+          <div class="field"><label for="f-nro_poliza">N° de póliza</label><input id="f-nro_poliza" name="nro_poliza" maxlength="60" class="mono" autofocus><small class="err" id="e-nro_poliza"></small></div>
+          <div class="field"><label for="f-asegurado">Asegurado</label><input id="f-asegurado" name="asegurado" maxlength="120"><small class="err" id="e-asegurado"></small></div>
           <div class="field"><label for="f-email">E-mail</label><input id="f-email" name="email" type="email" inputmode="email" maxlength="120"><small class="err" id="e-email"></small></div>
           <div class="field"><label for="f-celular">Celular</label><input id="f-celular" name="celular" type="tel" inputmode="tel" maxlength="40"><small class="err" id="e-celular"></small></div>
         </div>
@@ -284,13 +284,13 @@
       </fieldset>
       <fieldset>
         <legend>Cobertura</legend>
-        <div class="field wide"><label for="f-compania">Compañía <span class="req">*</span></label>
-          <input id="f-compania" name="compania" list="dl-comp" required maxlength="80" placeholder="Elegí una o escribí una nueva">
+        <div class="field wide"><label for="f-compania">Compañía</label>
+          <input id="f-compania" name="compania" list="dl-comp" maxlength="80" placeholder="Elegí una o escribí una nueva (opcional)">
           <datalist id="dl-comp"></datalist>
           <small class="err" id="e-compania"></small></div>
         <div class="grid2">
-          <div class="field"><label for="f-vig_inicio">Inicio de vigencia <span class="req">*</span></label><input id="f-vig_inicio" name="vig_inicio" type="date" required><small class="err" id="e-vig_inicio"></small></div>
-          <div class="field"><label for="f-vig_fin">Fin de vigencia <span class="req">*</span></label><input id="f-vig_fin" name="vig_fin" type="date" required><small class="err" id="e-vig_fin"></small></div>
+          <div class="field"><label for="f-vig_inicio">Inicio de vigencia</label><input id="f-vig_inicio" name="vig_inicio" type="date"><small class="err" id="e-vig_inicio"></small></div>
+          <div class="field"><label for="f-vig_fin">Fin de vigencia</label><input id="f-vig_fin" name="vig_fin" type="date"><small class="err" id="e-vig_fin"></small></div>
         </div>
         <p class="vig-hint" id="vig-hint" aria-live="polite"></p>
         <div class="field short"><label for="f-mios">MIOS <span class="opt">(opcional)</span></label><input id="f-mios" name="mios" maxlength="20"><small class="err"></small></div>

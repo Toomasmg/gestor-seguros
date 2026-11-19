@@ -225,7 +225,7 @@ function celda(p, k) {
   const vacio = '<span class="muted">—</span>';
   switch (k) {
     case 'estado': return `<span class="st ${p.est.k}">${esc(p.est.t)}</span>`;
-    case 'asegurado': return `<span class="name">${esc(p.asegurado)}</span>`;
+    case 'asegurado': return p.asegurado ? `<span class="name">${esc(p.asegurado)}</span>` : '<span class="muted">(sin nombre)</span>';
     case 'patente': return p.patente ? `<span class="plate">${esc(p.patente)}</span>` : vacio;
     case 'vig_inicio': case 'vig_fin': return p[k] ? `<span class="num">${fmtFecha(p[k])}</span>` : vacio;
     case 'mios': return p.mios ? `<span class="tag">${esc(p.mios)}</span>` : vacio;
@@ -240,9 +240,9 @@ function celda(p, k) {
 function filaHTML(p, cols) {
   const tds = cols.map((c) => `<td data-label="${esc(c.t)}">${celda(p, c.k)}</td>`).join('');
   const acciones = p.anulada
-    ? `<button type="button" class="icon-btn" data-react="${p.id}" aria-label="Reactivar la póliza de ${esc(p.asegurado)}" title="Reactivar">${icon('undo')}</button>`
-    : `<button type="button" class="icon-btn" data-edit="${p.id}" aria-label="Editar la póliza de ${esc(p.asegurado)}">${icon('pencil')}</button>
-      <button type="button" class="icon-btn danger" data-del="${p.id}" aria-label="Eliminar la póliza de ${esc(p.asegurado)}">${icon('trash')}</button>`;
+    ? `<button type="button" class="icon-btn" data-react="${p.id}" aria-label="Reactivar la póliza de ${esc(nombre(p))}" title="Reactivar">${icon('undo')}</button>`
+    : `<button type="button" class="icon-btn" data-edit="${p.id}" aria-label="Editar la póliza de ${esc(nombre(p))}">${icon('pencil')}</button>
+      <button type="button" class="icon-btn danger" data-del="${p.id}" aria-label="Eliminar la póliza de ${esc(nombre(p))}">${icon('trash')}</button>`;
   return `<tr class="row" data-id="${p.id}">${tds}<td class="c-act"><span class="acts">${acciones}</span></td></tr>`;
 }
 function encabezado(cols, ordenable) {
@@ -435,7 +435,7 @@ function abrirFicha(id) {
   $('#fi-estado').innerHTML = an
     ? `<span class="st anulada">Anulada el ${fmtFecha(p.anulada_el)}${p.motivo_anulacion ? ' · ' + esc(p.motivo_anulacion) : ''}</span>`
     : `<span class="st ${p.est.k}">${esc(p.est.t)}${p.vig_fin ? ` · ${p.est.k === 'vencida' ? 'venció' : 'vence'} el ${fmtFecha(p.vig_fin)}` : ''}</span>`;
-  $('#fi-nombre').textContent = p.asegurado;
+  $('#fi-nombre').textContent = nombre(p);
   $('#fi-sub').textContent = [p.nro_poliza && `Póliza ${p.nro_poliza}`, p.compania].filter(Boolean).join(' · ');
   const f = (t, v, cls = '') => `<div><dt>${t}</dt><dd class="${v ? cls : 'vacio'}">${v ? v : 'Sin cargar'}</dd></div>`;
   const mail = p.email ? `<a href="mailto:${esc(p.email)}">${esc(p.email)}</a>` : '';
@@ -458,31 +458,38 @@ function abrirFicha(id) {
 
 /* ---------- Formulario ---------- */
 const CAMPOS_FORM = ['nro_poliza', 'asegurado', 'patente', 'tipo', 'marca', 'modelo', 'email', 'celular', 'compania', 'vig_inicio', 'vig_fin', 'mios'];
-const REQ = { nro_poliza: 'Falta el N° de póliza.', asegurado: 'Falta el nombre del asegurado.', compania: 'Elegí o escribí la compañía.', vig_inicio: 'Elegí la fecha de inicio.', vig_fin: 'Elegí la fecha de fin.' };
+const nombre = (p) => (p && p.asegurado) || '(sin nombre)';
 const FM = () => $('#form').elements;
 let formInicial = '';
 const formValores = () => JSON.stringify(CAMPOS_FORM.map((k) => FM()[k].value));
 
 function setErr(k, msg) {
-  const el = FM()[k];
   const out = document.getElementById('e-' + k);
-  if (out) out.textContent = msg;
-  if (msg) { el.setAttribute('aria-invalid', 'true'); if (out) el.setAttribute('aria-describedby', out.id); }
-  else { el.removeAttribute('aria-invalid'); el.removeAttribute('aria-describedby'); }
+  if (out) { out.textContent = msg; out.classList.remove('aviso'); }
+  const el = FM()[k];
+  el.removeAttribute('aria-invalid');
+}
+/* Avisos que orientan pero NO impiden guardar: ella decide. */
+function setAviso(k, msg) {
+  const out = document.getElementById('e-' + k);
+  if (!out) return;
+  out.textContent = msg;
+  out.classList.toggle('aviso', !!msg);
 }
 function validarCampo(k) {
   const el = FM()[k];
   const v = el.value.trim();
-  if (REQ[k] && !v) { setErr(k, REQ[k]); return false; }
-  if (k === 'email' && v && !el.checkValidity()) { setErr(k, 'Revisá el e-mail: parece incompleto.'); return false; }
-  if (k === 'vig_fin' && v && FM().vig_inicio.value && v < FM().vig_inicio.value) { setErr(k, 'No puede ser anterior al inicio.'); return false; }
-  setErr(k, '');
+  if (k === 'email') setAviso(k, v && !el.checkValidity() ? 'Parece incompleto, pero se guarda igual.' : '');
+  if (k === 'vig_fin' || k === 'vig_inicio') {
+    const a = FM().vig_inicio.value, b = FM().vig_fin.value;
+    setAviso('vig_fin', a && b && b < a ? 'Ojo: el fin es anterior al inicio. Se guarda igual.' : '');
+  }
   return true;
 }
 function pistaVigencia() {
   const h = $('#vig-hint');
   const v = FM().vig_fin.value;
-  if (!v) { h.textContent = ''; h.className = 'vig-hint'; return; }
+  if (!v) { h.textContent = 'Sin fecha de fin: esta póliza no va a generar alertas de vencimiento.'; h.className = 'vig-hint'; return; }
   const d = diasHasta(v);
   const e = estado(d);
   h.className = 'vig-hint ' + (e.k === 'vigente' ? 'ok' : e.k);
@@ -497,13 +504,6 @@ function abrirForm(id = null) {
   $('#form-title').textContent = p ? 'Editar póliza' : 'Nueva póliza';
   $('#form-err').textContent = '';
   CAMPOS_FORM.forEach((k) => { FM()[k].value = p ? (p[k] || '') : ''; setErr(k, ''); });
-  if (!p) {
-    const t = hoy();
-    FM().vig_inicio.value = toISO(t);
-    const fin = new Date(t.getFullYear() + 1, t.getMonth(), t.getDate());
-    if (fin.getMonth() !== t.getMonth()) fin.setDate(0);
-    FM().vig_fin.value = toISO(fin);
-  }
   pistaVigencia();
   formInicial = formValores();
   $('#dlg-form').showModal();
@@ -517,15 +517,13 @@ async function cerrarForm() {
 }
 async function guardarForm(ev) {
   ev.preventDefault();
-  const okAll = CAMPOS_FORM.map(validarCampo).every(Boolean);
-  if (!okAll) {
-    $('#form-err').textContent = 'Revisá los campos marcados.';
-    const primero = CAMPOS_FORM.find((k) => FM()[k].getAttribute('aria-invalid') === 'true');
-    if (primero) FM()[primero].focus();
+  const datos = Object.fromEntries(CAMPOS_FORM.map((k) => [k, FM()[k].value.trim()]));
+  if (!CAMPOS_FORM.some((k) => datos[k])) {
+    $('#form-err').textContent = 'Completá al menos un dato para guardar la póliza.';
+    FM().asegurado.focus();
     return;
   }
   $('#form-err').textContent = '';
-  const datos = Object.fromEntries(CAMPOS_FORM.map((k) => [k, FM()[k].value.trim()]));
   const btn = $('#form-save');
   btn.disabled = true;
   try {
@@ -534,7 +532,7 @@ async function guardarForm(ev) {
     formInicial = formValores();
     $('#dlg-form').close();
     await cargar();
-    say('ok', `${nueva ? 'Póliza creada' : 'Póliza actualizada'}: ${datos.asegurado} · ${datos.compania}`);
+    say('ok', `${nueva ? 'Póliza creada' : 'Póliza actualizada'}: ${[datos.asegurado, datos.compania].filter(Boolean).join(' · ') || 'sin datos de identificación'}`);
   } catch (e) {
     $('#form-err').textContent = e.message;
   } finally {
@@ -548,7 +546,7 @@ async function eliminar(id) {
   if (!p) return;
   const ok = await confirmar({
     titulo: 'Eliminar póliza',
-    msg: `Vas a eliminar la póliza ${p.nro_poliza || '(sin número)'} de ${p.asegurado}. Esta acción no se puede deshacer.`,
+    msg: `Vas a eliminar la póliza ${p.nro_poliza || '(sin número)'} de ${nombre(p)}. Esta acción no se puede deshacer.`,
     ok: 'Eliminar', peligro: true,
   });
   if (!ok) return;
@@ -566,7 +564,7 @@ function abrirAnular(id) {
   const p = S.todas.find((x) => x.id === id);
   if (!p) return;
   anulandoId = id;
-  $('#an-nombre').textContent = p.asegurado;
+  $('#an-nombre').textContent = nombre(p);
   $('#an-motivo').value = '';
   $('#an-err').textContent = '';
   $('#dlg-anular').showModal();
@@ -587,7 +585,7 @@ async function reactivar(id) {
     await api('/api/poliza/reactivar', { id });
     if ($('#dlg-ficha').open) $('#dlg-ficha').close();
     await cargar();
-    say('ok', `Póliza reactivada: ${p ? p.asegurado : ''}. Volvió a la lista de Pólizas.`);
+    say('ok', `Póliza reactivada: ${nombre(p)}. Volvió a la lista de Pólizas.`);
   } catch (e) { falla(e); }
 }
 
@@ -670,7 +668,7 @@ function abrirAlertas() {
   $('#al-sub').textContent = `${n} póliza${n === 1 ? ' vencida o que vence' : 's vencidas o que vencen'} en ${ALERTA} días o menos.`;
   $('#al-list').innerHTML = lista.slice(0, 40).map((p) => `<li class="al-item">
       <span class="st ${p.est.k}">${esc(p.est.t)}</span>
-      <div><div class="name">${esc(p.asegurado)}</div><div class="meta">${[p.patente, p.compania, p.nro_poliza && 'póliza ' + p.nro_poliza].filter(Boolean).map(esc).join(' · ')}</div></div>
+      <div><div class="name">${esc(nombre(p))}</div><div class="meta">${[p.patente, p.compania, p.nro_poliza && 'póliza ' + p.nro_poliza].filter(Boolean).map(esc).join(' · ')}</div></div>
       <span class="num muted">${fmtFecha(p.vig_fin)}</span></li>`).join('')
     + (n > 40 ? `<li class="al-item"><span></span><span class="muted">… y ${n - 40} más en Vencimientos.</span><span></span></li>` : '');
   $('#dlg-alertas').showModal();
@@ -831,12 +829,12 @@ function eventos() {
   $('#form-x').addEventListener('click', cerrarForm);
   $('#form-cancel').addEventListener('click', cerrarForm);
   $('#dlg-form').addEventListener('cancel', (e) => { if (formValores() !== formInicial) { e.preventDefault(); cerrarForm(); } });
-  $('#form').addEventListener('focusout', (e) => { const k = e.target.name; if (k && CAMPOS_FORM.includes(k) && (e.target.value || e.target.getAttribute('aria-invalid'))) validarCampo(k); });
+  $('#form').addEventListener('focusout', (e) => { const k = e.target.name; if (k && CAMPOS_FORM.includes(k)) validarCampo(k); });
   $('#form').addEventListener('input', (e) => {
     const k = e.target.name;
     if (k === 'patente') e.target.value = e.target.value.toUpperCase();
-    if (e.target.getAttribute('aria-invalid') === 'true') validarCampo(k);
-    if (k === 'vig_fin' || k === 'vig_inicio') pistaVigencia();
+    if (k === 'vig_fin' || k === 'vig_inicio') { validarCampo(k); pistaVigencia(); }
+    if (k === 'email') validarCampo(k);
   });
 
   // aviso inicial

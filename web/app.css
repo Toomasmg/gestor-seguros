@@ -250,6 +250,7 @@ input[type="checkbox"]:checked { background: var(--paper); border-color: var(--p
 input[type="checkbox"]:checked::before { transform: scale(1); }
 .err { color: var(--bad); font-size: 13px; font-weight: 500; }
 .err:empty { display: none; }
+.err.aviso { color: var(--warn); }
 fieldset { min-width: 0; margin: 0 0 28px; padding: 0; border: 0; }
 legend { padding: 0 0 14px; font-size: 13.5px; font-weight: 600; color: var(--muted); }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }

@@ -55,7 +55,7 @@ def resolver_db():
 
 
 DB_PATH = resolver_db()
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 REPO = "Toomasmg/gestor-seguros"
 UPDATE = {"comprobado": False, "disponible": False, "version": "", "url": "", "sha": "", "tam": 0, "notas": "", "error": ""}
 VENTANA = None
@@ -271,25 +271,19 @@ db = DB(DB_PATH)
 
 
 def limpiar(d):
-    """Normaliza y valida una póliza recibida. Devuelve (datos, error)."""
+    """Normaliza una póliza recibida. NINGÚN dato es obligatorio (solo se evita guardar una ficha totalmente vacía)."""
     out = {}
     for c in CAMPOS:
         v = d.get(c, "")
         out[c] = ("" if v is None else str(v)).strip()[:200]
     out["patente"] = re.sub(r"\s+", "", out["patente"]).upper()
-    if not out["nro_poliza"]:
-        return None, "Falta el N° de póliza."
-    if not out["asegurado"]:
-        return None, "Falta el nombre del asegurado."
-    if not out["compania"]:
-        return None, "Elegí o escribí la compañía."
-    for k in ("vig_inicio", "vig_fin"):
+    for k in ("vig_inicio", "vig_fin"):          # una fecha vacía o ilegible simplemente queda sin fecha
         try:
             datetime.strptime(out[k], "%Y-%m-%d")
         except ValueError:
-            return None, "Las fechas de vigencia son obligatorias."
-    if out["vig_fin"] < out["vig_inicio"]:
-        return None, "El fin de vigencia no puede ser anterior al inicio."
+            out[k] = ""
+    if not any(out[c] for c in CAMPOS):
+        return None, "Completá al menos un dato para guardar la póliza."
     return out, None
 
 
