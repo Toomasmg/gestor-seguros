@@ -13,6 +13,9 @@ import sys
 import threading
 import time
 import unicodedata
+import urllib.request
+import hashlib
+import tempfile
 import webbrowser
 from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -52,6 +55,10 @@ def resolver_db():
 
 
 DB_PATH = resolver_db()
+APP_VERSION = "1.1.0"
+REPO = "Toomasmg/gestor-seguros"
+UPDATE = {"comprobado": False, "disponible": False, "version": "", "url": "", "sha": "", "tam": 0, "notas": "", "error": ""}
+VENTANA = None
 TOKEN = secrets.token_urlsafe(24)
 PORT = 0
 LAST_PING = 0.0
@@ -118,27 +125,68 @@ def toast(titulo, mensaje):
 
 
 # ------------------------------------------------------------------ base de datos
+def _cols(con, tabla):
+    return [r[1] for r in con.execute(f"PRAGMA table_info({tabla})")]
+
+
+def _m1(con):
+    """Estructura original (idempotente)."""
+    con.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS companias(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL UNIQUE COLLATE NOCASE);
+        CREATE TABLE IF NOT EXISTS polizas(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nro_poliza TEXT, asegurado TEXT, patente TEXT, tipo TEXT,
+            marca TEXT, modelo TEXT, email TEXT, celular TEXT,
+            compania TEXT, vig_inicio TEXT, vig_fin TEXT, mios TEXT DEFAULT '');
+        """)
+    if "mios" not in _cols(con, "polizas"):
+        con.execute("ALTER TABLE polizas ADD COLUMN mios TEXT DEFAULT ''")
+
+
+def _m2(con):
+    """Pólizas anuladas: se conservan todos los datos y se pueden reactivar."""
+    for nombre, ddl in (("anulada", "INTEGER NOT NULL DEFAULT 0"), ("anulada_el", "TEXT DEFAULT ''"),
+                        ("motivo_anulacion", "TEXT DEFAULT ''")):
+        if nombre not in _cols(con, "polizas"):
+            con.execute(f"ALTER TABLE polizas ADD COLUMN {nombre} {ddl}")
+
+
+# Para agregar campos o tablas en una versión futura: sumar acá (N, función). Se aplican en orden, una sola vez,
+# con respaldo automático de la base antes de tocarla.
+MIGRACIONES = [(1, _m1), (2, _m2)]
+
+
+def migrar(con, path):
+    actual = con.execute("PRAGMA user_version").fetchone()[0]
+    pendientes = [(v, f) for v, f in MIGRACIONES if v > actual]
+    if not pendientes:
+        return
+    try:
+        con_datos = con.execute("SELECT COUNT(*) FROM polizas").fetchone()[0] > 0
+    except sqlite3.Error:
+        con_datos = False
+    if con_datos and path != ":memory:":
+        copia = f"{path}.respaldo-antes-de-v{pendientes[-1][0]}"
+        if not os.path.exists(copia):
+            destino = sqlite3.connect(copia)
+            con.backup(destino)
+            destino.close()
+    for v, f in pendientes:
+        f(con)
+        con.execute(f"PRAGMA user_version = {v}")
+        con.commit()
+
+
 class DB:
     def __init__(self, path):
         self.lock = threading.RLock()
         self.con = sqlite3.connect(path, check_same_thread=False)
         self.con.row_factory = sqlite3.Row
         with self.lock:
-            self.con.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS companias(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    nombre TEXT NOT NULL UNIQUE COLLATE NOCASE);
-                CREATE TABLE IF NOT EXISTS polizas(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    nro_poliza TEXT, asegurado TEXT, patente TEXT, tipo TEXT,
-                    marca TEXT, modelo TEXT, email TEXT, celular TEXT,
-                    compania TEXT, vig_inicio TEXT, vig_fin TEXT, mios TEXT DEFAULT '');
-                """)
-            cols = [r[1] for r in self.con.execute("PRAGMA table_info(polizas)")]
-            if "mios" not in cols:
-                self.con.execute("ALTER TABLE polizas ADD COLUMN mios TEXT DEFAULT ''")
-            self.con.commit()
+            migrar(self.con, path)
 
     def companias(self):
         with self.lock:
@@ -196,6 +244,17 @@ class DB:
                                  vals + [pid])
             self.con.commit()
         return pid
+
+    def anular(self, pid, motivo):
+        with self.lock:
+            self.con.execute("UPDATE polizas SET anulada=1, anulada_el=?, motivo_anulacion=? WHERE id=?",
+                             (date.today().isoformat(), (motivo or "").strip()[:300], int(pid)))
+            self.con.commit()
+
+    def reactivar(self, pid):
+        with self.lock:
+            self.con.execute("UPDATE polizas SET anulada=0, anulada_el='', motivo_anulacion='' WHERE id=?", (int(pid),))
+            self.con.commit()
 
     def delete(self, ids):
         with self.lock:
@@ -400,10 +459,14 @@ ORDEN_EXP = [("nro_poliza", "N° PÓLIZA", 100), ("asegurado", "ASEGURADO", 170)
              ("vig_fin", "FIN VIGENCIA", 90), ("mios", "MIOS", 45)]
 
 
-def tabla_export(ids):
+def tabla_export(ids, anuladas=False):
     por_id = {p["id"]: p for p in db.polizas()}
-    enc = [c[1] for c in ORDEN_EXP] + ["DÍAS REST.", "ESTADO"]
-    anchos = [c[2] for c in ORDEN_EXP] + [60, 95]
+    if anuladas:
+        enc = [c[1] for c in ORDEN_EXP] + ["ANULADA EL", "MOTIVO"]
+        anchos = [c[2] for c in ORDEN_EXP] + [80, 150]
+    else:
+        enc = [c[1] for c in ORDEN_EXP] + ["DÍAS REST.", "ESTADO"]
+        anchos = [c[2] for c in ORDEN_EXP] + [60, 95]
     data = []
     for i in ids:
         p = por_id.get(int(i))
@@ -411,15 +474,18 @@ def tabla_export(ids):
             continue
         d = dias_restantes(p["vig_fin"])
         fila = [fmt(p[k]) if k in ("vig_inicio", "vig_fin") else (p.get(k) or "") for k, _, _ in ORDEN_EXP]
-        data.append(fila + ["" if d is None else d, estado_txt(d)])
+        if anuladas:
+            data.append(fila + [fmt(p.get("anulada_el")), p.get("motivo_anulacion") or ""])
+        else:
+            data.append(fila + ["" if d is None else d, estado_txt(d)])
     return enc, anchos, data
 
 
-def exportar_excel(ids):
+def exportar_excel(ids, anuladas=False):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
-    enc, anchos, data = tabla_export(ids)
+    enc, anchos, data = tabla_export(ids, anuladas)
     wb = Workbook()
     ws = wb.active
     ws.title = "Pólizas"
@@ -444,15 +510,15 @@ def exportar_excel(ids):
     return buf.getvalue()
 
 
-def exportar_pdf(ids, vista):
+def exportar_pdf(ids, vista, anuladas=False):
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-    enc, anchos, data = tabla_export(ids)
+    enc, anchos, data = tabla_export(ids, anuladas)
     est = getSampleStyleSheet()
     nombre = {"todas": "Listado general", "compania": "Listado por compañía",
-              "venc": "Listado por vencimientos"}.get(vista, "Listado")
+              "venc": "Listado por vencimientos", "anuladas": "Pólizas anuladas"}.get(vista, "Listado")
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=18, rightMargin=18, topMargin=22,
                             bottomMargin=22, title="Pólizas")
@@ -537,7 +603,8 @@ class Handler(BaseHTTPRequestHandler):
             if not self._auth():
                 return
             return self._send(200, {"ok": True, "polizas": db.polizas(), "companias": db.companias(),
-                                    "alerta_dias": ALERTA_DIAS, "db": DB_PATH})
+                                    "alerta_dias": ALERTA_DIAS, "db": DB_PATH,
+                                    "version": APP_VERSION, "update": _estado_update()})
         self._err("No encontrado", 404)
 
     def _auth(self):
@@ -570,6 +637,18 @@ class Handler(BaseHTTPRequestHandler):
                 db.add_compania(datos["compania"])
                 pid = db.save(datos, d.get("id"))
                 return self._send(200, {"ok": True, "id": pid})
+            if ruta == "/api/poliza/anular":
+                db.anular(d.get("id"), d.get("motivo"))
+                return self._send(200, {"ok": True})
+            if ruta == "/api/poliza/reactivar":
+                db.reactivar(d.get("id"))
+                return self._send(200, {"ok": True})
+            if ruta == "/api/update/check":
+                comprobar_actualizacion()
+                return self._send(200, {"ok": True, "update": _estado_update()})
+            if ruta == "/api/update/apply":
+                ok, msg = aplicar_actualizacion()
+                return self._send(200 if ok else 400, {"ok": ok, "error": None if ok else msg, "mensaje": msg})
             if ruta == "/api/polizas/delete":
                 db.delete(d.get("ids") or [])
                 return self._send(200, {"ok": True})
@@ -590,10 +669,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True})
             if ruta == "/api/export":
                 ids = [int(i) for i in (d.get("ids") or [])]
+                anul = d.get("vista") == "anuladas"
                 if d.get("formato") == "pdf":
-                    cuerpo, ct, ext = exportar_pdf(ids, d.get("vista")), "application/pdf", "pdf"
+                    cuerpo, ct, ext = exportar_pdf(ids, d.get("vista"), anul), "application/pdf", "pdf"
                 else:
-                    cuerpo = exportar_excel(ids)
+                    cuerpo = exportar_excel(ids, anul)
                     ct, ext = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"
                 return self._send(200, cuerpo, ct, {"X-Filename": f"polizas_{date.today():%Y%m%d}.{ext}"})
             self._err("No encontrado", 404)
@@ -601,6 +681,98 @@ class Handler(BaseHTTPRequestHandler):
             self._err(f"Solicitud inválida: {e}")
         except Exception as e:  # nunca dejar caer el servidor
             self._err(f"Error interno: {e}", 500)
+
+
+# ------------------------------------------------------------------ actualizaciones (GitHub Releases)
+def _version(s):
+    return tuple(int(x) for x in re.findall(r"\d+", str(s))[:3]) or (0,)
+
+
+def _estado_update():
+    return {k: UPDATE[k] for k in ("comprobado", "disponible", "version", "tam", "notas", "error")}
+
+
+def comprobar_actualizacion():
+    """Consulta la última versión publicada. Si no hay internet, falla en silencio: el programa sigue igual."""
+    UPDATE.update(comprobado=True, error="")
+    try:
+        req = urllib.request.Request(f"https://api.github.com/repos/{REPO}/releases/latest",
+                                     headers={"User-Agent": "GestorSeguros-actualizador", "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=6) as r:
+            info = json.loads(r.read().decode("utf-8"))
+        tag = info.get("tag_name", "")
+        if _version(tag) <= _version(APP_VERSION):
+            UPDATE.update(disponible=False)
+            return
+        activos = {a.get("name"): a for a in info.get("assets", [])}
+        exe = activos.get("GestorSeguros.exe")
+        if not exe:
+            return
+        url = exe.get("browser_download_url", "")
+        if not url.startswith(f"https://github.com/{REPO}/releases/download/"):
+            return
+        sha = (exe.get("digest") or "").removeprefix("sha256:").strip().lower()
+        if not sha and "GestorSeguros.exe.sha256" in activos:
+            with urllib.request.urlopen(activos["GestorSeguros.exe.sha256"]["browser_download_url"], timeout=6) as r:
+                sha = r.read().decode("utf-8").split()[0].strip().lower()
+        UPDATE.update(disponible=bool(sha), version=tag.lstrip("v"), url=url, sha=sha,
+                      tam=int(exe.get("size") or 0), notas=(info.get("body") or "")[:600])
+    except Exception as e:
+        UPDATE.update(error=str(e)[:120])
+
+
+def _salir():
+    if VENTANA is not None and VENTANA.poll() is None:
+        try:
+            VENTANA.terminate()
+        except Exception:
+            pass
+    os._exit(0)
+
+
+def aplicar_actualizacion():
+    """Descarga la versión nueva, verifica su firma SHA-256 y la reemplaza al cerrar. Los datos no se tocan."""
+    if not getattr(sys, "frozen", False):
+        return False, "Solo se puede actualizar el programa instalado (.exe)."
+    if not (UPDATE.get("disponible") and UPDATE.get("sha")):
+        return False, "No hay una actualización verificable disponible."
+    destino = os.path.join(APP_DIR, "GestorSeguros.nuevo.exe")
+    h = hashlib.sha256()
+    try:
+        req = urllib.request.Request(UPDATE["url"], headers={"User-Agent": "GestorSeguros-actualizador"})
+        with urllib.request.urlopen(req, timeout=40) as r, open(destino, "wb") as f:
+            while True:
+                bloque = r.read(1 << 20)
+                if not bloque:
+                    break
+                h.update(bloque)
+                f.write(bloque)
+    except Exception as e:
+        shutil.rmtree(destino, ignore_errors=True) if os.path.isdir(destino) else (os.path.exists(destino) and os.remove(destino))
+        return False, f"No se pudo descargar la actualización: {e}"
+    with open(destino, "rb") as f:
+        cabecera = f.read(2)
+    if h.hexdigest() != UPDATE["sha"] or cabecera != b"MZ":
+        os.remove(destino)
+        return False, "La descarga no coincide con la firma de seguridad. No se instaló nada."
+    bat = os.path.join(tempfile.gettempdir(), "gestor_seguros_actualizar.bat")
+    with open(bat, "w", encoding="utf-8") as f:
+        f.write(f'''@echo off
+chcp 65001 >nul
+set "VIEJO={sys.executable}"
+set "NUEVO={destino}"
+for /l %%i in (1,1,120) do (
+  move /y "%NUEVO%" "%VIEJO%" >nul 2>&1 && goto listo
+  ping -n 2 127.0.0.1 >nul
+)
+exit /b 1
+:listo
+start "" "%VIEJO%"
+(goto) 2>nul & del "%~f0"
+''')
+    subprocess.Popen(["cmd", "/c", bat], creationflags=0x00000208, close_fds=True)
+    threading.Timer(1.2, _salir).start()
+    return True, "Actualizando… el programa se reinicia solo."
 
 
 # ------------------------------------------------------------------ ventana y ciclo de vida
@@ -635,7 +807,7 @@ def abrir_ventana(url):
 
 
 def alertas_pendientes():
-    return sum(1 for p in db.polizas() if (dias_restantes(p["vig_fin"]) is not None
+    return sum(1 for p in db.polizas() if not p.get("anulada") and (dias_restantes(p["vig_fin"]) is not None
                                            and dias_restantes(p["vig_fin"]) <= ALERTA_DIAS))
 
 
@@ -684,8 +856,10 @@ def main():
     n = alertas_pendientes()
     if n:
         toast(APP_TITLE, f"{n} póliza(s) vencidas o por vencer (≤ {ALERTA_DIAS} días)")
-    proc = abrir_ventana(f"http://127.0.0.1:{PORT}/")
-    _vigilante(proc)
+    global VENTANA
+    VENTANA = abrir_ventana(f"http://127.0.0.1:{PORT}/")
+    threading.Timer(4.0, comprobar_actualizacion).start()
+    _vigilante(VENTANA)
 
 
 if __name__ == "__main__":

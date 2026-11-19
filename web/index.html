@@ -28,6 +28,8 @@
     <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></symbol>
     <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/></symbol>
     <symbol id="i-up" viewBox="0 0 24 24"><path d="m7 14 5-5 5 5"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+    <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></symbol>
   </defs>
 </svg>
 
@@ -43,8 +45,10 @@
       <nav class="nav" aria-label="Secciones">
         <button type="button" data-page="polizas">Pólizas</button>
         <button type="button" data-page="venc">Vencimientos <b class="nav-n" id="nav-n" hidden>0</b></button>
+        <button type="button" data-page="anul">Anuladas <b class="nav-n quiet" id="nav-a" hidden>0</b></button>
         <button type="button" data-page="comp">Compañías</button>
       </nav>
+      <button type="button" class="link upd" id="btn-update" hidden></button>
       <button type="button" class="btn solid" id="btn-nueva"><svg class="ic"><use href="#i-plus"/></svg>Nueva póliza</button>
     </div>
   </header>
@@ -155,6 +159,35 @@
         </div>
       </section>
 
+      <!-- ================= SECCIÓN: ANULADAS ================= -->
+      <section class="page" id="page-anul" aria-labelledby="h-anul" hidden>
+        <div class="page-head">
+          <div class="ph-title">
+            <h1 id="h-anul">Anuladas</h1>
+            <p class="sub" id="anul-sub"></p>
+          </div>
+          <div class="search" role="search">
+            <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+            <label class="sr-only" for="q-anul">Buscar entre las pólizas anuladas</label>
+            <input id="q-anul" type="search" placeholder="Buscar entre las anuladas" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="head-actions">
+            <button type="button" class="btn" id="btn-export-anul" aria-haspopup="true" aria-expanded="false" commandfor="menu-export" command="toggle-popover"><svg class="ic"><use href="#i-download"/></svg>Exportar<svg class="ic sm"><use href="#i-chev-down"/></svg></button>
+          </div>
+        </div>
+        <p class="nota">Una póliza anulada <b>no se pierde</b>: conserva todos sus datos, no cuenta para los vencimientos y se puede reactivar cuando quieras.</p>
+        <div class="table-card">
+          <div class="table-wrap" id="wrap-anul" role="region" aria-labelledby="h-anul" tabindex="0">
+            <table id="tabla-anul">
+              <caption class="sr-only">Pólizas anuladas con todos sus datos</caption>
+              <thead id="thead-anul"></thead>
+              <tbody id="tbody-anul"></tbody>
+            </table>
+            <div class="empty" id="empty-anul" hidden></div>
+          </div>
+        </div>
+      </section>
+
       <!-- ================= SECCIÓN 3: COMPAÑÍAS ================= -->
       <section class="page scroll" id="page-comp" aria-labelledby="h-comp" hidden>
         <div class="page-head">
@@ -186,7 +219,7 @@
   </main>
 
   <footer class="foot">
-    <div class="wrap"><p id="msg" role="status" aria-live="polite"></p></div>
+    <div class="wrap"><p id="msg" role="status" aria-live="polite"></p><span class="ver" id="ver"></span></div>
   </footer>
 </div>
 
@@ -210,8 +243,12 @@
   </div>
   <div class="drawer-body" id="fi-body"></div>
   <div class="drawer-foot">
-    <button type="button" class="btn quiet-danger" id="fi-del"><svg class="ic"><use href="#i-trash"/></svg>Eliminar</button>
+    <div class="fi-acc">
+      <button type="button" class="btn quiet-danger" id="fi-del"><svg class="ic"><use href="#i-trash"/></svg>Eliminar</button>
+      <button type="button" class="btn" id="fi-anular"><svg class="ic"><use href="#i-ban"/></svg>Anular</button>
+    </div>
     <button type="button" class="btn solid" id="fi-edit" autofocus><svg class="ic"><use href="#i-pencil"/></svg>Editar póliza</button>
+    <button type="button" class="btn solid" id="fi-react" hidden><svg class="ic"><use href="#i-undo"/></svg>Reactivar póliza</button>
   </div>
 </dialog>
 
@@ -275,6 +312,19 @@
     <div class="modal-actions">
       <button type="submit" class="btn" value="cancel" autofocus>Cancelar</button>
       <button type="submit" class="btn danger" value="ok" id="cf-ok">Eliminar</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Anular póliza -->
+<dialog class="modal" id="dlg-anular" aria-labelledby="an-title" closedby="any">
+  <form id="form-anular" method="dialog">
+    <h2 id="an-title">Anular póliza</h2>
+    <p>La póliza de <b id="an-nombre"></b> pasa a la sección <b>Anuladas</b> con todos sus datos. No cuenta para los vencimientos y la podés reactivar cuando quieras. <b>No se elimina.</b></p>
+    <div class="field"><label for="an-motivo">Motivo <span class="opt">(opcional)</span></label><input id="an-motivo" maxlength="300" placeholder="Ej.: falta de pago, cambió de compañía" autocomplete="off" autofocus><small class="err" id="an-err"></small></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="an-cancel">Cancelar</button>
+      <button type="submit" class="btn solid">Anular póliza</button>
     </div>
   </form>
 </dialog>

@@ -38,6 +38,22 @@ const VENC_COLS = [
   { k: 'vig_fin', t: 'Fin de vigencia' },
   { k: 'contacto', t: 'Contacto' },
 ];
+const ANUL_COLS = [
+  { k: 'asegurado', t: 'Asegurado' },
+  { k: 'nro_poliza', t: 'N° póliza' },
+  { k: 'patente', t: 'Patente' },
+  { k: 'tipo', t: 'Tipo' },
+  { k: 'marca', t: 'Marca' },
+  { k: 'modelo', t: 'Modelo' },
+  { k: 'email', t: 'E-mail' },
+  { k: 'celular', t: 'Celular' },
+  { k: 'compania', t: 'Compañía' },
+  { k: 'vig_inicio', t: 'Inicio de vigencia' },
+  { k: 'vig_fin', t: 'Fin de vigencia' },
+  { k: 'mios', t: 'MIOS' },
+  { k: 'anulada_el', t: 'Anulada el' },
+  { k: 'motivo_anulacion', t: 'Motivo' },
+];
 const POR_DEFECTO_OCULTAS = ['vig_inicio'];          // se pueden mostrar desde «Más opciones»
 const AUTO_SI_HAY_DATOS = ['email', 'celular', 'mios'];
 const GRUPOS_CERRADOS = new Set(['b:90', 'b:mas']);
@@ -45,7 +61,7 @@ const GRUPOS_CERRADOS = new Set(['b:90', 'b:mas']);
 /* ---------- Estado ---------- */
 const S = {
   page: 'polizas',
-  polizas: [], companias: [], dbPath: '',
+  polizas: [], todas: [], anuladas: [], rowsAnul: [], qa: '', version: '', update: null, exportBtn: null, companias: [], dbPath: '',
   vista: store.get('vista3', 'todas'),
   q: '', estado: '', comp: '',
   sort: store.get('sort3', { k: 'dias', dir: 1 }),
@@ -105,10 +121,14 @@ async function cargar() {
   const j = await api('/api/state');
   S.dbPath = j.db;
   S.companias = j.companias;
-  S.polizas = j.polizas.map((p) => {
+  S.todas = j.polizas.map((p) => {
     const dias = diasHasta(p.vig_fin);
-    return { ...p, dias, est: estado(dias), _q: norm(`${p.patente} ${p.asegurado} ${p.nro_poliza}`) };
+    return { ...p, dias, est: p.anulada ? { k: 'anulada', t: 'Anulada' } : estado(dias), _q: norm(`${p.patente} ${p.asegurado} ${p.nro_poliza}`) };
   });
+  S.polizas = S.todas.filter((p) => !p.anulada);      // todo el programa trabaja con las activas
+  S.anuladas = S.todas.filter((p) => p.anulada);
+  S.version = j.version;
+  S.update = j.update;
   if (S.comp && !S.companias.some((c) => c.toLowerCase() === S.comp.toLowerCase())) S.comp = '';
   S.cargado = true;
   render();
@@ -177,11 +197,16 @@ function render() {
   const nn = $('#nav-n');
   nn.textContent = c.alertas;
   nn.hidden = !c.alertas;
+  const na = $('#nav-a');
+  na.textContent = S.anuladas.length;
+  na.hidden = !S.anuladas.length;
   $$('.alerta-dias').forEach((e) => { e.textContent = ALERTA; });
   $('#dl-comp').innerHTML = S.companias.map((n) => `<option value="${esc(n)}">`).join('');
   if (S.page === 'polizas') renderPolizas(c);
   else if (S.page === 'venc') renderVenc(c);
+  else if (S.page === 'anul') renderAnul();
   else renderComp();
+  renderUpdate();
   const m = $('#msg');
   if (!m.className && !m.textContent) m.textContent = mensajeBase();
   else if (!m.className) m.textContent = mensajeBase();
@@ -189,7 +214,7 @@ function render() {
 
 function irA(page) {
   S.page = page;
-  ['polizas', 'venc', 'comp'].forEach((p) => { $('#page-' + p).hidden = p !== page; });
+  ['polizas', 'venc', 'anul', 'comp'].forEach((p) => { $('#page-' + p).hidden = p !== page; });
   $$('.nav button').forEach((b) => (b.dataset.page === page ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')));
   if (page === 'venc' && !S.vsubElegido) S.vsub = contar().alertas ? 'alertas' : 'prox30';
   render();
@@ -206,17 +231,19 @@ function celda(p, k) {
     case 'mios': return p.mios ? `<span class="tag">${esc(p.mios)}</span>` : vacio;
     case 'nro_poliza': return p.nro_poliza ? `<span class="num">${esc(p.nro_poliza)}</span>` : vacio;
     case 'celular': return p.celular ? `<span class="num">${esc(p.celular)}</span>` : vacio;
+    case 'anulada_el': return p.anulada_el ? `<span class="num">${fmtFecha(p.anulada_el)}</span>` : vacio;
+    case 'motivo_anulacion': return p.motivo_anulacion ? esc(p.motivo_anulacion) : vacio;
     case 'contacto': { const v = p.celular || p.email; return v ? esc(v) : vacio; }
     default: return p[k] ? esc(p[k]) : vacio;
   }
 }
 function filaHTML(p, cols) {
   const tds = cols.map((c) => `<td data-label="${esc(c.t)}">${celda(p, c.k)}</td>`).join('');
-  return `<tr class="row" data-id="${p.id}">${tds}
-    <td class="c-act"><span class="acts">
-      <button type="button" class="icon-btn" data-edit="${p.id}" aria-label="Editar la póliza de ${esc(p.asegurado)}">${icon('pencil')}</button>
-      <button type="button" class="icon-btn danger" data-del="${p.id}" aria-label="Eliminar la póliza de ${esc(p.asegurado)}">${icon('trash')}</button>
-    </span></td></tr>`;
+  const acciones = p.anulada
+    ? `<button type="button" class="icon-btn" data-react="${p.id}" aria-label="Reactivar la póliza de ${esc(p.asegurado)}" title="Reactivar">${icon('undo')}</button>`
+    : `<button type="button" class="icon-btn" data-edit="${p.id}" aria-label="Editar la póliza de ${esc(p.asegurado)}">${icon('pencil')}</button>
+      <button type="button" class="icon-btn danger" data-del="${p.id}" aria-label="Eliminar la póliza de ${esc(p.asegurado)}">${icon('trash')}</button>`;
+  return `<tr class="row" data-id="${p.id}">${tds}<td class="c-act"><span class="acts">${acciones}</span></td></tr>`;
 }
 function encabezado(cols, ordenable) {
   return `<tr>${cols.map((c) => {
@@ -298,6 +325,10 @@ function vacio(que, hay) {
          <div class="row-btns"><button type="button" class="btn solid" data-act="nueva">${icon('plus')}Nueva póliza</button></div>`
       : `<h3>Sin resultados</h3><p>Ninguna póliza coincide con lo que buscaste.</p>
          <div class="row-btns"><button type="button" class="btn solid" data-act="limpiar">Quitar búsqueda y filtros</button></div>`;
+  } else if (que === 'anul') {
+    e.innerHTML = !S.anuladas.length
+      ? '<h3>No hay pólizas anuladas</h3><p>Cuando anules una póliza desde su ficha, va a aparecer acá con todos sus datos y la vas a poder reactivar.</p>'
+      : '<h3>Sin resultados</h3><p>Ninguna póliza anulada coincide con lo que buscaste.</p>';
   } else {
     e.innerHTML = '<h3>Nada para mostrar</h3><p>No hay pólizas en esta categoría.</p>';
   }
@@ -353,10 +384,22 @@ function renderGrafico() {
   $('#cal-grid').innerHTML = html;
 }
 
+/* ---------- Sección: Anuladas ---------- */
+function renderAnul() {
+  const q = norm(S.qa);
+  S.rowsAnul = S.anuladas.filter((p) => !q || p._q.includes(q))
+    .sort((a, b) => (b.anulada_el || '').localeCompare(a.anulada_el || '') || cmp(a.asegurado, b.asegurado));
+  $('#anul-sub').textContent = !S.anuladas.length ? 'Todavía no hay pólizas anuladas'
+    : (q ? `Mostrando ${S.rowsAnul.length} de ${S.anuladas.length}` : `${S.anuladas.length} en total`);
+  $('#thead-anul').innerHTML = encabezado(ANUL_COLS, false);
+  $('#tbody-anul').innerHTML = S.rowsAnul.map((p) => filaHTML(p, ANUL_COLS)).join('');
+  vacio('anul', S.rowsAnul.length);
+}
+
 /* ---------- Sección: Compañías ---------- */
 function renderComp() {
   const cuenta = {};
-  S.polizas.forEach((p) => { const k = (p.compania || '').toLowerCase(); cuenta[k] = (cuenta[k] || 0) + 1; });
+  S.todas.forEach((p) => { const k = (p.compania || '').toLowerCase(); cuenta[k] = (cuenta[k] || 0) + 1; });
   $('#comp-total').textContent = S.companias.length;
   $('#comp-list').innerHTML = S.companias.map((n) => `<tr>
       <td><span class="name">${esc(n)}</span></td>
@@ -385,10 +428,13 @@ function confirmar({ titulo, msg, ok = 'Aceptar', peligro = false }) {
 
 /* ---------- Ficha (solo lectura) ---------- */
 function abrirFicha(id) {
-  const p = S.polizas.find((x) => x.id === id);
+  const p = S.todas.find((x) => x.id === id);
   if (!p) return;
   S.fichaId = id;
-  $('#fi-estado').innerHTML = `<span class="st ${p.est.k}">${esc(p.est.t)}${p.vig_fin ? ` · ${p.est.k === 'vencida' ? 'venció' : 'vence'} el ${fmtFecha(p.vig_fin)}` : ''}</span>`;
+  const an = !!p.anulada;
+  $('#fi-estado').innerHTML = an
+    ? `<span class="st anulada">Anulada el ${fmtFecha(p.anulada_el)}${p.motivo_anulacion ? ' · ' + esc(p.motivo_anulacion) : ''}</span>`
+    : `<span class="st ${p.est.k}">${esc(p.est.t)}${p.vig_fin ? ` · ${p.est.k === 'vencida' ? 'venció' : 'vence'} el ${fmtFecha(p.vig_fin)}` : ''}</span>`;
   $('#fi-nombre').textContent = p.asegurado;
   $('#fi-sub').textContent = [p.nro_poliza && `Póliza ${p.nro_poliza}`, p.compania].filter(Boolean).join(' · ');
   const f = (t, v, cls = '') => `<div><dt>${t}</dt><dd class="${v ? cls : 'vacio'}">${v ? v : 'Sin cargar'}</dd></div>`;
@@ -401,8 +447,13 @@ function abrirFicha(id) {
     <section class="fi-sec"><h3>Cobertura</h3><dl class="fi-grid">
       ${f('Compañía', esc(p.compania))}${f('N° de póliza', esc(p.nro_poliza), 'mono')}
       ${f('Inicio de vigencia', fmtFecha(p.vig_inicio), 'mono')}${f('Fin de vigencia', fmtFecha(p.vig_fin), 'mono')}
-      ${p.mios ? f('MIOS', esc(p.mios)) : ''}</dl></section>`;
+      ${p.mios ? f('MIOS', esc(p.mios)) : ''}</dl></section>
+    ${an ? `<section class="fi-sec"><h3>Anulación</h3><dl class="fi-grid">${f('Anulada el', fmtFecha(p.anulada_el), 'mono')}${f('Motivo', esc(p.motivo_anulacion))}</dl></section>` : ''}`;
+  $('#fi-anular').hidden = an;
+  $('#fi-edit').hidden = an;
+  $('#fi-react').hidden = !an;
   $('#dlg-ficha').showModal();
+  (an ? $('#fi-react') : $('#fi-edit')).focus();
 }
 
 /* ---------- Formulario ---------- */
@@ -493,7 +544,7 @@ async function guardarForm(ev) {
 
 /* ---------- Eliminar ---------- */
 async function eliminar(id) {
-  const p = S.polizas.find((x) => x.id === id);
+  const p = S.todas.find((x) => x.id === id);
   if (!p) return;
   const ok = await confirmar({
     titulo: 'Eliminar póliza',
@@ -506,6 +557,69 @@ async function eliminar(id) {
     if ($('#dlg-ficha').open) $('#dlg-ficha').close();
     await cargar();
     say('ok', 'Póliza eliminada.');
+  } catch (e) { falla(e); }
+}
+
+/* ---------- Anular y reactivar (no es lo mismo que eliminar) ---------- */
+let anulandoId = null;
+function abrirAnular(id) {
+  const p = S.todas.find((x) => x.id === id);
+  if (!p) return;
+  anulandoId = id;
+  $('#an-nombre').textContent = p.asegurado;
+  $('#an-motivo').value = '';
+  $('#an-err').textContent = '';
+  $('#dlg-anular').showModal();
+}
+async function confirmarAnular(ev) {
+  ev.preventDefault();
+  try {
+    await api('/api/poliza/anular', { id: anulandoId, motivo: $('#an-motivo').value.trim() });
+    $('#dlg-anular').close();
+    if ($('#dlg-ficha').open) $('#dlg-ficha').close();
+    await cargar();
+    say('ok', 'Póliza anulada. La encontrás en la sección Anuladas y se puede reactivar.');
+  } catch (e) { $('#an-err').textContent = e.message; }
+}
+async function reactivar(id) {
+  const p = S.todas.find((x) => x.id === id);
+  try {
+    await api('/api/poliza/reactivar', { id });
+    if ($('#dlg-ficha').open) $('#dlg-ficha').close();
+    await cargar();
+    say('ok', `Póliza reactivada: ${p ? p.asegurado : ''}. Volvió a la lista de Pólizas.`);
+  } catch (e) { falla(e); }
+}
+
+/* ---------- Actualizaciones ---------- */
+function renderUpdate() {
+  const u = S.update;
+  const b = $('#btn-update');
+  b.hidden = !(u && u.disponible);
+  if (u && u.disponible) b.textContent = `Hay una versión nueva (${u.version}): actualizar`;
+  $('#ver').textContent = S.version ? `Versión ${S.version}` : '';
+}
+async function actualizar() {
+  const u = S.update;
+  if (!u || !u.disponible) return;
+  const ok = await confirmar({
+    titulo: `Actualizar a la versión ${u.version}`,
+    msg: `Se descarga la versión nueva (${Math.max(1, Math.round((u.tam || 0) / 1048576))} MB) y el programa se reinicia solo. Tus pólizas y compañías no se tocan.${u.notas ? '\n\nNovedades:\n' + u.notas : ''}`,
+    ok: 'Actualizar ahora',
+  });
+  if (!ok) return;
+  say('ok', 'Descargando la actualización… no cierres el programa.', 180000);
+  try { const r = await api('/api/update/apply', {}); say('ok', r.mensaje, 60000); } catch (e) { falla(e); }
+}
+async function buscarActualizacion() {
+  say('ok', 'Buscando actualizaciones…', 20000);
+  try {
+    const r = await api('/api/update/check', {});
+    S.update = r.update;
+    renderUpdate();
+    if (r.update.disponible) say('ok', `Hay una versión nueva: ${r.update.version}. Usá el botón de arriba para instalarla.`);
+    else if (r.update.error) say('warn', 'No se pudo comprobar (¿sin internet?). El programa sigue funcionando igual.');
+    else say('ok', 'Ya tenés la última versión.');
   } catch (e) { falla(e); }
 }
 
@@ -564,7 +678,8 @@ function abrirAlertas() {
 
 /* ---------- Exportar / importar ---------- */
 async function exportar(formato) {
-  if (!S.rowsPol.length) { say('warn', 'No hay pólizas para exportar con los filtros actuales.'); return; }
+  const filas = S.page === 'anul' ? S.rowsAnul : S.rowsPol;
+  if (!filas.length) { say('warn', 'No hay pólizas para exportar con los filtros actuales.'); return; }
   const ext = formato === 'pdf' ? 'pdf' : 'xlsx';
   const sugerido = `polizas_${toISO(hoy()).replaceAll('-', '')}.${ext}`;
   let handle = null;
@@ -578,7 +693,7 @@ async function exportar(formato) {
   }
   try {
     say('ok', 'Preparando archivo…', 30000);
-    const { blob, name } = await api('/api/export', { formato, ids: S.rowsPol.map((p) => p.id), vista: S.vista }, { blob: true });
+    const { blob, name } = await api('/api/export', { formato, ids: filas.map((p) => p.id), vista: S.page === 'anul' ? 'anuladas' : S.vista }, { blob: true });
     if (handle) {
       const w = await handle.createWritable();
       await w.write(blob);
@@ -613,7 +728,8 @@ function ubicarMenu(menu, btn) {
 }
 function menuMas() {
   const vis = new Set(columnasPol().map((c) => c.k));
-  $('#menu-mas').innerHTML = `<button type="button" data-mas="importar"><b>Importar desde Excel</b><span>Suma pólizas nuevas sin duplicar</span></button><hr>
+  $('#menu-mas').innerHTML = `<button type="button" data-mas="importar"><b>Importar desde Excel</b><span>Suma pólizas nuevas sin duplicar</span></button>
+    <button type="button" data-mas="actualizar"><b>Buscar actualizaciones</b><span>Necesita internet; el resto del programa no</span></button><hr>
     <p class="menu-title">Columnas de la tabla</p>`
     + COLS.filter((c) => c.k !== 'estado').map((c) => `<label><input type="checkbox" data-col="${c.k}" ${vis.has(c.k) ? 'checked' : ''}><span>${esc(c.t)}</span></label>`).join('')
     + '<p class="menu-note">E-mail, Celular y MIOS aparecen solos cuando tienen datos.</p>';
@@ -649,7 +765,7 @@ function eventos() {
   });
 
   // tablas (delegación) — pólizas y vencimientos
-  for (const t of ['pol', 'venc']) {
+  for (const t of ['pol', 'venc', 'anul']) {
     $('#tbody-' + t).addEventListener('click', (e) => {
       const g = e.target.closest('[data-grp]');
       if (g) {
@@ -658,6 +774,7 @@ function eventos() {
         renderPolizas(contar());
         return;
       }
+      const re = e.target.closest('[data-react]'); if (re) { reactivar(Number(re.dataset.react)); return; }
       const ed = e.target.closest('[data-edit]'); if (ed) { abrirForm(Number(ed.dataset.edit)); return; }
       const del = e.target.closest('[data-del]'); if (del) { eliminar(Number(del.dataset.del)); return; }
       const tr = e.target.closest('tr.row');
@@ -699,6 +816,15 @@ function eventos() {
   $('#fi-x').addEventListener('click', () => $('#dlg-ficha').close());
   $('#fi-edit').addEventListener('click', () => { const id = S.fichaId; $('#dlg-ficha').close(); abrirForm(id); });
   $('#fi-del').addEventListener('click', () => eliminar(S.fichaId));
+  $('#fi-anular').addEventListener('click', () => abrirAnular(S.fichaId));
+  $('#fi-react').addEventListener('click', () => reactivar(S.fichaId));
+  $('#form-anular').addEventListener('submit', confirmarAnular);
+  $('#an-cancel').addEventListener('click', () => $('#dlg-anular').close());
+  $('#q-anul').addEventListener('input', (e) => { S.qa = e.target.value; renderAnul(); });
+  $('#btn-update').addEventListener('click', actualizar);
+  // el botón «Exportar» de Anuladas abre el mismo menú que el de Pólizas
+  $('#btn-export').addEventListener('click', () => { S.exportBtn = $('#btn-export'); });
+  $('#btn-export-anul').addEventListener('click', () => { S.exportBtn = $('#btn-export-anul'); });
 
   // formulario
   $('#form').addEventListener('submit', guardarForm);
@@ -722,7 +848,7 @@ function eventos() {
     const btn = $(b), menu = $(m);
     menu.addEventListener('toggle', (e) => {
       btn.setAttribute('aria-expanded', String(e.newState === 'open'));
-      if (e.newState === 'open') ubicarMenu(menu, btn);
+      if (e.newState === 'open') ubicarMenu(menu, (m === '#menu-export' && S.exportBtn) || btn);
     });
     if (!('commandForElement' in HTMLButtonElement.prototype)) btn.addEventListener('click', (ev) => { ev.preventDefault(); menu.togglePopover(); });
   });
@@ -734,6 +860,7 @@ function eventos() {
   });
   $('#menu-mas').addEventListener('click', (e) => {
     if (e.target.closest('[data-mas="importar"]')) { $('#menu-mas').hidePopover(); $('#file-import').click(); }
+    else if (e.target.closest('[data-mas="actualizar"]')) { $('#menu-mas').hidePopover(); buscarActualizacion(); }
   });
   $('#menu-mas').addEventListener('change', (e) => {
     const c = e.target.closest('[data-col]'); if (!c) return;
@@ -758,6 +885,8 @@ function eventos() {
     .catch(() => { if (++fallos === 3) say('err', 'Se perdió la conexión con el programa. Cerralo y volvé a abrirlo.'); });
   ping();
   setInterval(ping, 10000);
+  // la comprobación de actualizaciones corre en segundo plano en el programa; se consulta un rato después de abrir
+  for (const ms of [9000, 45000]) setTimeout(async () => { try { const s = await api('/api/state'); S.update = s.update; renderUpdate(); } catch { /* sin conexión */ } }, ms);
   addEventListener('pagehide', () => { try { fetch('/api/bye', { method: 'POST', keepalive: true, headers: { 'X-Token': TOKEN } }); } catch { /* cierre */ } });
 }
 

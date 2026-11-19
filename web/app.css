@@ -76,6 +76,7 @@ h1, h2, h3, p, dl, dd { margin: 0; }
 .nav button:hover { color: var(--paper); }
 .nav button[aria-current="page"] { color: var(--paper); font-weight: 600; }
 .nav button[aria-current="page"]::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 2px; background: var(--paper); }
+.nav-n.quiet { background: var(--line-2); color: var(--text); }
 .nav-n { min-width: 22px; padding: 1px 7px; border-radius: 99px; background: var(--warn); color: #1c1503; font: 600 12px/18px var(--sans); text-align: center; }
 
 /* ================= Botones y controles ================= */
@@ -146,6 +147,8 @@ tr.row:hover .acts, tr.row:focus-within .acts { opacity: 1; }
 .st.vigente { --c: var(--muted); }
 .st.vigente::before { background: var(--ok); }
 .st.sin { --c: var(--muted); }
+.st.anulada { --c: var(--muted); }
+.st.anulada::before { background: transparent; box-shadow: inset 0 0 0 2px var(--muted); }
 .st.sin::before { background: var(--line-2); }
 .name { font-weight: 600; color: var(--paper); }
 .num { font-family: var(--mono); font-size: 13.5px; }
@@ -269,6 +272,11 @@ dialog.drawer[open] { display: flex; flex-direction: column; height: 100dvh; max
 .drawer-body { flex: 1; min-height: 0; overflow: auto; padding: 24px 28px 8px; }
 .drawer-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 16px 28px; border-top: 1px solid var(--line); flex: none; }
 #dlg-ficha .drawer-foot { justify-content: space-between; }
+.fi-acc { display: flex; gap: 8px; }
+#cf-msg { white-space: pre-line; }
+.nota { margin: -4px 0 16px; color: var(--muted); font-size: 14px; }
+.nota b { color: var(--text); }
+.upd { margin-left: auto; color: var(--warn); text-decoration-color: rgba(244, 182, 63, .5); font-weight: 600; white-space: nowrap; }
 .form-err { margin-right: auto; color: var(--bad); font-size: 14px; font-weight: 500; }
 .fi-estado { margin-bottom: 8px; }
 .fi-sec { margin-bottom: 28px; }
@@ -298,7 +306,8 @@ dialog.modal.wide[open] { width: min(700px, 94vw); }
 
 /* ================= Pie ================= */
 .foot { border-top: 1px solid var(--line); }
-.foot .wrap { display: flex; align-items: center; height: 40px; }
+.foot .wrap { display: flex; align-items: center; justify-content: space-between; gap: 24px; height: 40px; }
+.ver { flex: none; font-size: 13px; color: var(--muted); }
 #msg { display: flex; align-items: center; gap: 9px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13.5px; color: var(--muted); }
 #msg::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--line-2)); flex: none; }
 #msg.ok { --c: var(--ok); color: var(--text); } #msg.err { --c: var(--bad); color: var(--bad); font-weight: 500; } #msg.warn { --c: var(--warn); color: var(--warn); }

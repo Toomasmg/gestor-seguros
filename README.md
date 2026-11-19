@@ -22,3 +22,14 @@ python -m PyInstaller --noconfirm --onefile --windowed --name GestorSeguros --ic
 (No excluir `PIL`: reportlab lo necesita para el PDF.)
 
 Tipografías: IBM Plex (licencia OFL, ver `web/fonts/LICENSE-IBM-Plex-OFL.txt`).
+
+## Actualizaciones
+El programa busca solo el último *Release* de este repositorio (si hay internet), descarga el `.exe`,
+verifica su firma SHA-256 y se reemplaza al reiniciar. **Los datos del usuario nunca se tocan**: los cambios en la
+estructura de la base se aplican como migraciones (`MIGRACIONES` en `gestor_seguros.py`) y, antes de tocar una base
+con datos, se hace un respaldo automático (`seguros.db.respaldo-antes-de-vN`).
+
+Publicar una versión nueva:
+1. Cambiar `APP_VERSION` en `gestor_seguros.py` (y, si hace falta, agregar una migración).
+2. `git commit` + `git push`.
+3. `powershell -File tools\publicar.ps1 -Version X.Y.Z -Notas "qué cambió"`.

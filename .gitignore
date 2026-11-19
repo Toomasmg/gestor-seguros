@@ -19,3 +19,6 @@ __pycache__/
 # Pruebas y sistema
 .claude/
 Thumbs.db
+
+# Respaldos automáticos de la base
+*.respaldo*
