@@ -13,11 +13,12 @@ import sys
 import threading
 import time
 import unicodedata
+import urllib.parse
 import urllib.request
 import hashlib
 import tempfile
 import webbrowser
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ALERTA_DIAS = 12
@@ -55,7 +56,7 @@ def resolver_db():
 
 
 DB_PATH = resolver_db()
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 REPO = "Toomasmg/gestor-seguros"
 UPDATE = {"comprobado": False, "disponible": False, "version": "", "url": "", "sha": "", "tam": 0, "notas": "", "error": ""}
 VENTANA = None
@@ -167,9 +168,26 @@ def _m3(con):
         """)
 
 
+def _m4(con):
+    """Archivos adjuntos por póliza (los archivos viven en la carpeta «Archivos», junto a la base)."""
+    con.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS adjuntos(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, poliza_id INTEGER NOT NULL, nombre TEXT NOT NULL,
+            archivo TEXT NOT NULL, tam INTEGER NOT NULL DEFAULT 0, agregado_el TEXT);
+        CREATE INDEX IF NOT EXISTS ix_adjuntos_poliza ON adjuntos(poliza_id);
+        """)
+
+
+def _m5(con):
+    """Papelera: eliminar una póliza la manda 30 días a la papelera antes de borrarla de verdad."""
+    if "eliminada_el" not in _cols(con, "polizas"):
+        con.execute("ALTER TABLE polizas ADD COLUMN eliminada_el TEXT DEFAULT ''")
+
+
 # Para agregar campos o tablas en una versión futura: sumar acá (N, función). Se aplican en orden, una sola vez,
 # con respaldo automático de la base antes de tocarla.
-MIGRACIONES = [(1, _m1), (2, _m2), (3, _m3)]
+MIGRACIONES = [(1, _m1), (2, _m2), (3, _m3), (4, _m4), (5, _m5)]
 
 
 def migrar(con, path):
@@ -220,7 +238,7 @@ class DB:
 
     def uso_compania(self, nombre):
         with self.lock:
-            return self.con.execute("SELECT COUNT(*) FROM polizas WHERE compania=? COLLATE NOCASE",
+            return self.con.execute("SELECT COUNT(*) FROM polizas WHERE compania=? COLLATE NOCASE AND COALESCE(eliminada_el, '') = ''",
                                     (nombre,)).fetchone()[0]
 
     def del_compania(self, nombre):
@@ -243,7 +261,7 @@ class DB:
 
     def polizas(self):
         with self.lock:
-            return [dict(r) for r in self.con.execute("SELECT * FROM polizas")]
+            return [dict(r) for r in self.con.execute("SELECT * FROM polizas WHERE COALESCE(eliminada_el, '') = ''")]
 
     def save(self, d, pid=None):
         vals = [d.get(c, "") for c in CAMPOS]
@@ -300,19 +318,73 @@ class DB:
             self.con.commit()
             return True
 
+    def adjuntos_listar(self):
+        with self.lock:
+            return [dict(r) for r in self.con.execute("SELECT a.id, a.poliza_id, a.nombre, a.tam, a.agregado_el FROM adjuntos a JOIN polizas p ON p.id = a.poliza_id "
+                "WHERE COALESCE(p.eliminada_el, '') = '' ORDER BY a.id DESC")]
+
+    def adjunto_get(self, aid):
+        with self.lock:
+            r = self.con.execute("SELECT * FROM adjuntos WHERE id=?", (int(aid),)).fetchone()
+            return dict(r) if r else None
+
+    def adjunto_nuevo(self, pid, nombre, archivo, tam):
+        with self.lock:
+            cur = self.con.execute("INSERT INTO adjuntos(poliza_id, nombre, archivo, tam, agregado_el) VALUES(?,?,?,?,?)",
+                                   (int(pid), nombre, archivo, int(tam), datetime.now().isoformat(timespec="seconds")))
+            self.con.commit()
+            return cur.lastrowid
+
+    def adjunto_borrar(self, aid):
+        with self.lock:
+            a = self.adjunto_get(aid)
+            if not a:
+                return False
+            self.con.execute("DELETE FROM adjuntos WHERE id=?", (int(aid),))
+            self.con.commit()
+        _borrar_archivo(a["archivo"])
+        return True
+
+    def existe_poliza(self, pid):
+        with self.lock:
+            return self.con.execute("SELECT 1 FROM polizas WHERE id=? AND COALESCE(eliminada_el, '') = ''", (int(pid),)).fetchone() is not None
+
     def renovaciones(self):
         with self.lock:
             return [dict(r) for r in self.con.execute("SELECT * FROM renovaciones ORDER BY id DESC")]
 
     def delete(self, ids):
+        """Eliminar: la póliza va a la papelera (se puede recuperar durante 30 días)."""
         with self.lock:
+            self.con.executemany("UPDATE polizas SET eliminada_el=? WHERE id=?", [(date.today().isoformat(), int(i)) for i in ids])
+            self.con.commit()
+
+    def papelera(self):
+        with self.lock:
+            return [dict(r) for r in self.con.execute(
+                "SELECT id, nro_poliza, asegurado, patente, compania, eliminada_el FROM polizas "
+                "WHERE COALESCE(eliminada_el, '') != '' ORDER BY eliminada_el DESC, id DESC")]
+
+    def restaurar(self, pid):
+        with self.lock:
+            self.con.execute("UPDATE polizas SET eliminada_el='' WHERE id=?", (int(pid),))
+            self.con.commit()
+
+    def borrar_definitivo(self, ids):
+        with self.lock:
+            archivos = []
+            for i in ids:
+                archivos += [r["archivo"] for r in self.con.execute("SELECT archivo FROM adjuntos WHERE poliza_id=?", (int(i),))]
+            self.con.executemany("DELETE FROM adjuntos WHERE poliza_id=?", [(int(i),) for i in ids])
+            for rel in archivos:
+                _borrar_archivo(rel)
             self.con.executemany("DELETE FROM renovaciones WHERE poliza_id=?", [(int(i),) for i in ids])
             self.con.executemany("DELETE FROM polizas WHERE id=?", [(int(i),) for i in ids])
             self.con.commit()
 
     def existe(self, nro, patente):
         with self.lock:
-            return self.con.execute("SELECT 1 FROM polizas WHERE nro_poliza=? AND patente=?",
+            return self.con.execute("SELECT 1 FROM polizas WHERE nro_poliza=? AND patente=? AND COALESCE(eliminada_el, '') = ''",
                                     (nro, patente)).fetchone() is not None
 
 
@@ -596,8 +668,9 @@ PLANTILLAS_BASE = [
      "texto": "Hola {nombre}, ya renové tu seguro hasta el {fecha}. Cualquier consulta, estoy a disposición."},
 ]
 CONFIG_DEF = {"plantillas": PLANTILLAS_BASE, "plantilla_pred": "aviso", "codigo_pais": "54",
-              "respaldo_activo": True, "respaldo_carpeta": "", "respaldo_cantidad": 30}
-RESPALDO = {"ultimo": "", "archivo": "", "error": ""}
+              "wa_mi_numero": "", "wa_mi_nombre": "", "wa_abrir": "auto",
+              "respaldo_activo": True, "respaldo_carpeta": "", "respaldo_cantidad": 30, "respaldo_archivos": True}
+RESPALDO = {"ultimo": "", "archivo": "", "error": "", "archivos": 0}
 _PATRON_RESPALDO = re.compile(r"^seguros_\d{4}-\d{2}-\d{2}(_\d{6})?\.db$")
 
 
@@ -631,6 +704,14 @@ def guardar_config(nuevo):
         cfg["respaldo_carpeta"] = str(nuevo["respaldo_carpeta"] or "").strip()[:300]
     if "respaldo_cantidad" in nuevo:
         cfg["respaldo_cantidad"] = max(1, min(365, int(nuevo["respaldo_cantidad"])))
+    if "respaldo_archivos" in nuevo:
+        cfg["respaldo_archivos"] = bool(nuevo["respaldo_archivos"])
+    if "wa_mi_numero" in nuevo:
+        cfg["wa_mi_numero"] = re.sub(r"[^\d+\s()-]", "", str(nuevo["wa_mi_numero"] or "")).strip()[:30]
+    if "wa_mi_nombre" in nuevo:
+        cfg["wa_mi_nombre"] = str(nuevo["wa_mi_nombre"] or "").strip()[:60]
+    if "wa_abrir" in nuevo:
+        cfg["wa_abrir"] = nuevo["wa_abrir"] if nuevo["wa_abrir"] in ("auto", "escritorio", "web") else "auto"
     db.config_set(cfg)
     return cfg
 
@@ -669,7 +750,13 @@ def hacer_respaldo(manual=False):
             dst.close()
         os.replace(tmp, destino)
         _rotar_respaldos(carpeta, int(cfg["respaldo_cantidad"]))
-        RESPALDO.update(ultimo=datetime.now().isoformat(timespec="seconds"), archivo=destino, error="")
+        aviso = ""
+        if cfg.get("respaldo_archivos", True):
+            copiados, fallidos = espejo_archivos(os.path.join(carpeta, "Archivos"))
+            RESPALDO["archivos"] = copiados
+            if fallidos:
+                aviso = f"La base se copió, pero {fallidos} archivo(s) adjunto(s) no se pudieron copiar."
+        RESPALDO.update(ultimo=datetime.now().isoformat(timespec="seconds"), archivo=destino, error=aviso)
         return True, destino
     except Exception as e:
         RESPALDO.update(error=f"No se pudo guardar la copia en «{carpeta}»: {e}"[:300])
@@ -687,13 +774,17 @@ def estado_respaldo():
             ultimo = datetime.fromtimestamp(os.path.getmtime(os.path.join(carpeta, archivos[-1]))).isoformat(timespec="seconds")
     except OSError:
         pass
-    return {"carpeta": carpeta, "ultimo": ultimo, "cantidad": cantidad, "error": RESPALDO["error"]}
+    return {"carpeta": carpeta, "ultimo": ultimo, "cantidad": cantidad, "error": RESPALDO["error"], "archivos": RESPALDO["archivos"]}
 
 
 def _hilo_respaldo():
     """Una copia por día: al abrir el programa y, si queda abierto, cada vez que cambia el día."""
     time.sleep(3)
     while True:
+        try:
+            purgar_papelera()
+        except Exception:
+            pass
         try:
             cfg = cargar_config()
             if cfg["respaldo_activo"]:
@@ -737,6 +828,111 @@ def renovar_datos(d):
             inicio = ""
     nro = re.sub(r"\s+", " ", str(d.get("nro_poliza") or "")).strip()[:60]
     return (True, "") if db.renovar(pid, inicio, fin, nro) else (False, "No se encontró la póliza.")
+
+
+# ------------------------------------------------------------------ archivos adjuntos
+_URL_WA = re.compile(r"^(https://wa\.me/\d{6,16}(\?[^\s]*)?|https://web\.whatsapp\.com/send\?[^\s]+|whatsapp://send\?[^\s]+)$")
+_RESERVADOS = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+
+
+def dir_archivos():
+    return os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "Archivos")
+
+
+def _nombre_seguro(nombre):
+    n = os.path.basename(str(nombre or "").replace("\\", "/"))
+    n = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", n).strip(" .")[:150] or "archivo"
+    return "_" + n if n.split(".")[0].upper() in _RESERVADOS else n
+
+
+def _ruta_adjunto(rel):
+    """Ruta absoluta de un adjunto, SOLO si queda dentro de la carpeta de archivos."""
+    base = os.path.realpath(dir_archivos())
+    ruta = os.path.realpath(os.path.join(base, rel))
+    return ruta if ruta.startswith(base + os.sep) else None
+
+
+def _borrar_archivo(rel):
+    ruta = _ruta_adjunto(rel)
+    if not ruta:
+        return
+    try:
+        os.remove(ruta)
+        carpeta = os.path.dirname(ruta)
+        if not os.listdir(carpeta):
+            os.rmdir(carpeta)
+    except OSError:
+        pass
+
+
+def subir_adjunto(pid, nombre, rfile, total):
+    """Guarda un archivo (sin límite de tamaño; se escribe de a pedazos). Devuelve el registro creado."""
+    if not db.existe_poliza(pid):
+        raise ValueError("La póliza no existe.")
+    if total <= 0:
+        raise ValueError("El archivo está vacío.")
+    base = dir_archivos()
+    os.makedirs(base, exist_ok=True)
+    if shutil.disk_usage(base).free < total + 200 * 1024 * 1024:
+        raise ValueError("No hay espacio suficiente en el disco para guardar este archivo.")
+    seguro = _nombre_seguro(nombre)
+    rel = os.path.join(str(int(pid)), f"{secrets.token_hex(4)}_{seguro}")
+    destino = os.path.join(base, rel)
+    os.makedirs(os.path.dirname(destino), exist_ok=True)
+    restante = total
+    try:
+        with open(destino, "wb") as f:
+            while restante > 0:
+                bloque = rfile.read(min(1 << 20, restante))
+                if not bloque:
+                    raise ValueError("La subida se cortó antes de terminar.")
+                f.write(bloque)
+                restante -= len(bloque)
+    except Exception:
+        try:
+            os.remove(destino)
+        except OSError:
+            pass
+        raise
+    aid = db.adjunto_nuevo(pid, seguro, rel, total)
+    return {"id": aid, "poliza_id": int(pid), "nombre": seguro, "tam": total}
+
+
+DIAS_PAPELERA = 30
+
+
+def purgar_papelera():
+    """Borra de verdad lo que lleva más de 30 días en la papelera (y sus archivos)."""
+    limite = (date.today() - timedelta(days=DIAS_PAPELERA)).isoformat()
+    ids = [x["id"] for x in db.papelera() if x["eliminada_el"] <= limite]
+    if ids:
+        db.borrar_definitivo(ids)
+    return len(ids)
+
+
+def info_archivos():
+    lista = db.adjuntos_listar()
+    return {"carpeta": dir_archivos(), "cantidad": len(lista), "bytes": sum(a["tam"] for a in lista)}
+
+
+def espejo_archivos(destino_base):
+    """Copia a la carpeta de respaldo los adjuntos que todavía no están (nunca borra nada del respaldo)."""
+    origen = dir_archivos()
+    copiados = fallidos = 0
+    if not os.path.isdir(origen):
+        return 0, 0
+    for raiz, _, nombres in os.walk(origen):
+        for n in nombres:
+            src = os.path.join(raiz, n)
+            dst = os.path.join(destino_base, os.path.relpath(src, origen))
+            try:
+                if not (os.path.exists(dst) and os.path.getsize(dst) == os.path.getsize(src)):
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    shutil.copy2(src, dst)
+                copiados += 1
+            except OSError:
+                fallidos += 1
+    return copiados, fallidos
 
 
 # ------------------------------------------------------------------ servidor HTTP
@@ -802,6 +998,7 @@ class Handler(BaseHTTPRequestHandler):
                                     "alerta_dias": ALERTA_DIAS, "db": DB_PATH,
                                     "version": APP_VERSION, "update": _estado_update(),
                                     "config": cargar_config(), "respaldo": estado_respaldo(),
+                                    "adjuntos": db.adjuntos_listar(), "archivos": info_archivos(), "papelera": db.papelera(),
                                     "renovaciones": db.renovaciones()})
         self._err("No encontrado", 404)
 
@@ -825,6 +1022,14 @@ class Handler(BaseHTTPRequestHandler):
             if ruta == "/api/bye":
                 BYE = time.time()
                 return self._send(200, {"ok": True})
+            if ruta == "/api/adjuntos/subir":
+                q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                try:
+                    pid = int(q.get("poliza", [""])[0])
+                except ValueError:
+                    return self._err("Póliza inválida.")
+                return self._send(200, {"ok": True, "adjunto": subir_adjunto(
+                    pid, q.get("nombre", ["archivo"])[0], self.rfile, int(self.headers.get("Content-Length") or 0))})
             if ruta == "/api/import":
                 return self._send(200, importar_xlsx(self._body()))
             d = self._json()
@@ -852,9 +1057,38 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True})
             if ruta == "/api/abrir-url":
                 url = str(d.get("url") or "")
-                if not url.startswith("https://wa.me/") or len(url) > 4000:
+                if not _URL_WA.match(url) or len(url) > 4000:
                     return self._err("Dirección no permitida.", 403)
-                webbrowser.open(url)
+                if url.startswith("whatsapp://"):
+                    os.startfile(url)              # app de WhatsApp para Windows
+                else:
+                    webbrowser.open(url)
+                return self._send(200, {"ok": True})
+            if ruta == "/api/adjuntos/abrir":
+                a = db.adjunto_get(d.get("id"))
+                ruta_f = _ruta_adjunto(a["archivo"]) if a else None
+                if not ruta_f or not os.path.isfile(ruta_f):
+                    return self._err("No se encontró el archivo en la carpeta de adjuntos.", 404)
+                os.startfile(ruta_f)
+                return self._send(200, {"ok": True})
+            if ruta == "/api/adjuntos/carpeta":
+                a = db.adjunto_get(d.get("id")) if d.get("id") else None
+                ruta_f = _ruta_adjunto(a["archivo"]) if a else None
+                if ruta_f and os.path.isfile(ruta_f):
+                    subprocess.Popen(["explorer", f"/select,{ruta_f}"])
+                else:
+                    os.makedirs(dir_archivos(), exist_ok=True)
+                    os.startfile(dir_archivos())
+                return self._send(200, {"ok": True})
+            if ruta == "/api/adjuntos/borrar":
+                return self._send(200, {"ok": db.adjunto_borrar(d.get("id"))})
+            if ruta == "/api/papelera/restaurar":
+                db.restaurar(d.get("id"))
+                return self._send(200, {"ok": True})
+            if ruta == "/api/papelera/borrar":
+                ids = [x["id"] for x in db.papelera()] if d.get("todo") else [int(i) for i in (d.get("ids") or [])]
+                en_papelera = {x["id"] for x in db.papelera()}
+                db.borrar_definitivo([i for i in ids if i in en_papelera])     # solo lo que ya está en la papelera
                 return self._send(200, {"ok": True})
             if ruta == "/api/poliza/anular":
                 db.anular(d.get("id"), d.get("motivo"))

@@ -33,6 +33,10 @@
     <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
     <symbol id="i-chat" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21.4 11-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V5M7 9l5-5 5 5M5 20h14"/></symbol>
   </defs>
 </svg>
 
@@ -70,7 +74,7 @@
           <div class="search" role="search">
             <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
             <label class="sr-only" for="q">Buscar por patente, asegurado o número de póliza</label>
-            <input id="q" type="search" placeholder="Buscar por patente, asegurado o N° de póliza" autocomplete="off" spellcheck="false">
+            <input id="q" type="search" placeholder="Buscar por nombre, patente, póliza, teléfono, marca…" autocomplete="off" spellcheck="false">
             <button type="button" class="ghost-x" id="q-clear" aria-label="Limpiar búsqueda" hidden><svg class="ic"><use href="#i-x"/></svg></button>
           </div>
           <div class="head-actions">
@@ -351,6 +355,7 @@
   <form id="form-wa" method="dialog">
     <h2 id="wa-title">Enviar WhatsApp</h2>
     <p id="wa-para"></p>
+    <p class="cfg-nota" id="wa-emisor"></p>
     <div class="field"><label>Elegí un mensaje</label><div class="wa-tpl" id="wa-tpl" role="group" aria-label="Mensajes guardados"></div></div>
     <div class="grid2" style="margin-top:14px">
       <div class="field"><label for="wa-nombre">Saludar como</label><input id="wa-nombre" maxlength="60" autocomplete="off"></div>
@@ -359,19 +364,31 @@
     <div class="field" style="margin-top:14px"><label for="wa-texto">Mensaje <span class="opt">(lo podés cambiar antes de enviar)</span></label><textarea id="wa-texto" rows="6" maxlength="1500"></textarea></div>
     <small class="err" id="wa-err"></small>
     <div class="modal-actions">
+      <button type="button" class="link" id="wa-config" style="margin-right:auto">Editar mis mensajes</button>
       <button type="button" class="btn" id="wa-cancel">Cancelar</button>
       <button type="submit" class="btn solid"><svg class="ic"><use href="#i-chat"/></svg>Abrir WhatsApp</button>
     </div>
   </form>
 </dialog>
 
-<!-- Configuración -->
-<dialog class="drawer" id="dlg-config" aria-labelledby="cfg-title" closedby="any">
-  <div class="drawer-head">
-    <div><h2 id="cfg-title">Configuración</h2><p class="sub" id="cfg-estado">Los cambios se guardan solos.</p></div>
-    <button type="button" class="icon-btn" id="cfg-x" aria-label="Cerrar la configuración"><svg class="ic"><use href="#i-x"/></svg></button>
+<!-- Configuración: pantalla dividida en secciones -->
+<dialog class="panelcfg" id="dlg-config" aria-labelledby="cfg-title" closedby="any">
+  <div class="cfg-wrap">
+    <nav class="cfg-nav" aria-label="Secciones de la configuración">
+      <h2 id="cfg-title">Configuración</h2>
+      <button type="button" data-sec="wa"><b>WhatsApp</b><small>Tu número y tus mensajes</small></button>
+      <button type="button" data-sec="resp"><b>Copia de seguridad</b><small>Proteger tus datos</small></button>
+      <button type="button" data-sec="arch"><b>Archivos adjuntos</b><small>Dónde se guardan</small></button>
+      <button type="button" data-sec="pap"><b>Papelera</b><small>Pólizas eliminadas</small></button>
+      <button type="button" data-sec="rev"><b>Revisar datos</b><small>Errores y datos raros</small></button>
+      <button type="button" data-sec="prog"><b>Programa</b><small>Versión y actualizaciones</small></button>
+      <p class="cfg-estado" id="cfg-estado">Los cambios se guardan solos.</p>
+    </nav>
+    <section class="cfg-main" aria-live="polite">
+      <header class="cfg-main-head"><h3 id="cfg-sec-titulo"></h3><button type="button" class="icon-btn" id="cfg-x" aria-label="Cerrar la configuración"><svg class="ic"><use href="#i-x"/></svg></button></header>
+      <div class="cfg-body" id="cfg-body"></div>
+    </section>
   </div>
-  <div class="drawer-body" id="cfg-body"></div>
 </dialog>
 
 <!-- Anular póliza -->

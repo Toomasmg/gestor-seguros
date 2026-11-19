@@ -61,7 +61,7 @@ const GRUPOS_CERRADOS = new Set(['b:90', 'b:mas']);
 /* ---------- Estado ---------- */
 const S = {
   page: 'polizas',
-  polizas: [], todas: [], anuladas: [], rowsAnul: [], qa: '', version: '', update: null, exportBtn: null, config: null, respaldo: null, renov: {}, companias: [], dbPath: '',
+  polizas: [], todas: [], anuladas: [], rowsAnul: [], qa: '', version: '', update: null, exportBtn: null, config: null, respaldo: null, renov: {}, adjuntos: [], adjCuenta: {}, archivos: null, papelera: [], cfgSec: 'wa', tplAbiertos: new Set(), companias: [], dbPath: '',
   vista: store.get('vista3', 'todas'),
   q: '', estado: '', comp: '',
   sort: store.get('sort3', { k: 'dias', dir: 1 }),
@@ -130,7 +130,13 @@ async function cargar() {
   S.version = j.version;
   S.update = j.update;
   S.config = j.config;
+  S.papelera = j.papelera || [];
+  S.todas.forEach((p) => { p._q = armarBlob(p); });      // lo que se puede buscar de cada póliza
   S.respaldo = j.respaldo;
+  S.adjuntos = j.adjuntos || [];
+  S.archivos = j.archivos;
+  S.adjCuenta = {};
+  S.adjuntos.forEach((a) => { S.adjCuenta[a.poliza_id] = (S.adjCuenta[a.poliza_id] || 0) + 1; });
   S.renov = {};
   (j.renovaciones || []).forEach((r) => { (S.renov[r.poliza_id] = S.renov[r.poliza_id] || []).push(r); });
   if (S.comp && !S.companias.some((c) => c.toLowerCase() === S.comp.toLowerCase())) S.comp = '';
@@ -141,14 +147,33 @@ async function cargar() {
 /* ---------- Mensajes (pie de pantalla: nunca tapan el contenido) ---------- */
 let msgTimer = null;
 const mensajeBase = () => { const n = S.polizas.length; return `${n} póliza${n === 1 ? '' : 's'} guardadas en este equipo`; };
-function say(tipo, texto, ms = 7000) {
+function say(tipo, texto, ms = 7000, accion = null) {
   const m = $('#msg');
   clearTimeout(msgTimer);
   m.className = tipo;
   m.textContent = texto;
+  if (accion) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'link'; b.textContent = accion.texto;
+    b.addEventListener('click', accion.fn);
+    m.append(b);
+  }
   msgTimer = setTimeout(() => { m.className = ''; m.textContent = mensajeBase(); }, tipo === 'err' ? 20000 : ms);
 }
 const falla = (e) => say('err', e.message || String(e));
+
+/* ---------- Búsqueda amplia y clientes ---------- */
+const normEsp = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+/* Todo lo que se puede buscar de una póliza, en minúsculas y sin acentos. Incluye el celular en formato WhatsApp. */
+function armarBlob(p) {
+  const tel = p.celular ? numeroWA(p.celular).num : '';
+  const b = normEsp([p.asegurado, p.trato, p.patente, p.nro_poliza, p.tipo, p.marca, p.modelo, p.compania, p.email, p.celular, tel].join(' '));
+  return `${b} ${b.replace(/ /g, '')}`;                 // con y sin espacios: «AB 123 CD» y «AB123CD» encuentran lo mismo
+}
+/* Cada palabra buscada tiene que aparecer en algún dato, en cualquier orden («Gómez María» = «María Gómez»). */
+const coincide = (p, q) => normEsp(q).split(' ').filter(Boolean).every((t) => p._q.includes(t));
+const claveCliente = (p) => normEsp(p.asegurado).split(' ').filter(Boolean).sort().join(' ');
+const otrasDelCliente = (p) => { const k = claveCliente(p); return k ? S.todas.filter((x) => x.id !== p.id && claveCliente(x) === k) : []; };
 
 /* ---------- Datos derivados ---------- */
 const cmp = (a, b) => String(a ?? '').localeCompare(String(b ?? ''), 'es', { numeric: true, sensitivity: 'base' });
@@ -168,9 +193,8 @@ function ordenarPol(arr) {
   });
 }
 function filtrarPol() {
-  const q = norm(S.q);
   return S.polizas.filter((p) => {
-    if (q && !p._q.includes(q)) return false;
+    if (S.q && !coincide(p, S.q)) return false;
     if (S.estado && p.est.k !== S.estado) return false;
     if (S.comp && (p.compania || '').toLowerCase() !== S.comp.toLowerCase()) return false;
     return true;
@@ -229,7 +253,8 @@ function celda(p, k) {
   const vacio = '<span class="muted">—</span>';
   switch (k) {
     case 'estado': return `<span class="st ${p.est.k}">${esc(p.est.t)}</span>`;
-    case 'asegurado': return p.asegurado ? `<span class="name">${esc(p.asegurado)}</span>` : '<span class="muted">(sin nombre)</span>';
+    case 'asegurado': return (p.asegurado ? `<span class="name">${esc(p.asegurado)}</span>` : '<span class="muted">(sin nombre)</span>')
+      + (S.adjCuenta[p.id] ? `<span class="clip" title="${S.adjCuenta[p.id]} archivo${S.adjCuenta[p.id] === 1 ? '' : 's'} adjunto${S.adjCuenta[p.id] === 1 ? '' : 's'}">${icon('clip')}${S.adjCuenta[p.id]}</span>` : '');
     case 'patente': return p.patente ? `<span class="plate">${esc(p.patente)}</span>` : vacio;
     case 'vig_inicio': case 'vig_fin': return p[k] ? `<span class="num">${fmtFecha(p[k])}</span>` : vacio;
     case 'mios': return p.mios ? `<span class="tag">${esc(p.mios)}</span>` : vacio;
@@ -392,8 +417,8 @@ function renderGrafico() {
 
 /* ---------- Sección: Anuladas ---------- */
 function renderAnul() {
-  const q = norm(S.qa);
-  S.rowsAnul = S.anuladas.filter((p) => !q || p._q.includes(q))
+  const q = S.qa;
+  S.rowsAnul = S.anuladas.filter((p) => !q || coincide(p, q))
     .sort((a, b) => (b.anulada_el || '').localeCompare(a.anulada_el || '') || cmp(a.asegurado, b.asegurado));
   $('#anul-sub').textContent = !S.anuladas.length ? 'Todavía no hay pólizas anuladas'
     : (q ? `Mostrando ${S.rowsAnul.length} de ${S.anuladas.length}` : `${S.anuladas.length} en total`);
@@ -460,10 +485,24 @@ function abrirFicha(id) {
     $('#fi-body').insertAdjacentHTML('beforeend', `<section class="fi-sec"><h3>Renovaciones</h3><dl class="fi-grid">${hist.slice(0, 6).map((r) =>
       f(`Renovada el ${fmtFecha(r.hecha_el)}`, `${r.inicio_nuevo ? fmtFecha(r.inicio_nuevo) + ' → ' : 'hasta '}${fmtFecha(r.fin_nuevo)}`, 'mono')).join('')}</dl></section>`);
   }
+  const otras = otrasDelCliente(p);
+  if (otras.length) {
+    $('#fi-body').insertAdjacentHTML('beforeend', `<section class="fi-sec"><h3>Otras pólizas de este cliente <span class="n">· ${otras.length}</span></h3><ul class="otras">${otras.map((o) => `<li><button type="button" data-ficha="${o.id}">
+      <span class="st ${o.est.k}">${esc(o.est.t)}</span><span class="ot">${esc([o.marca, o.modelo].filter(Boolean).join(' ') || o.tipo || 'Póliza')}${o.patente ? ' · ' + esc(o.patente) : ''}</span><small>${esc(o.compania || '')}</small></button></li>`).join('')}</ul></section>`);
+  }
+  $('#fi-body').insertAdjacentHTML('beforeend', `<section class="fi-sec"><h3>Archivos <span class="n" id="fi-arch-n"></span></h3>
+    <div class="drop" id="fi-drop" tabindex="0" role="button" aria-label="Agregar archivos: arrastralos acá o presioná Enter para elegirlos">
+      ${icon('upload')}<span><b>Arrastrá los archivos acá</b></span><span>o <u>elegilos desde la computadora</u> · sin límite de cantidad ni de tamaño</span></div>
+    <input type="file" id="fi-arch-input" multiple hidden>
+    <ul class="arch-prog" id="fi-arch-prog" aria-live="polite"></ul>
+    <ul class="arch-list" id="fi-arch-list"></ul></section>`);
+  renderAdjuntos();
   $('#fi-anular').hidden = an;
   $('#fi-der').hidden = an;
   $('#fi-react').hidden = !an;
-  $('#dlg-ficha').showModal();
+  const dlgF = $('#dlg-ficha');
+  if (!dlgF.open) dlgF.showModal();
+  $('#fi-body').scrollTop = 0;
   (an ? $('#fi-react') : $('#fi-renovar')).focus();
 }
 
@@ -557,7 +596,7 @@ async function eliminar(id) {
   if (!p) return;
   const ok = await confirmar({
     titulo: 'Eliminar póliza',
-    msg: `Vas a eliminar la póliza ${p.nro_poliza || '(sin número)'} de ${nombre(p)}. Esta acción no se puede deshacer.`,
+    msg: `Vas a eliminar la póliza ${p.nro_poliza || '(sin número)'} de ${nombre(p)}. Va a la Papelera y la podés recuperar durante 30 días (Configuración > Papelera).${S.adjCuenta[id] ? ` Sus ${S.adjCuenta[id]} archivo${S.adjCuenta[id] === 1 ? '' : 's'} adjunto${S.adjCuenta[id] === 1 ? '' : 's'} se conservan.` : ''}`,
     ok: 'Eliminar', peligro: true,
   });
   if (!ok) return;
@@ -565,7 +604,15 @@ async function eliminar(id) {
     await api('/api/polizas/delete', { ids: [id] });
     if ($('#dlg-ficha').open) $('#dlg-ficha').close();
     await cargar();
-    say('ok', 'Póliza eliminada.');
+    say('ok', 'Póliza eliminada. Quedó 30 días en la Papelera.', 14000, { texto: 'Deshacer', fn: () => restaurar(id) });
+  } catch (e) { falla(e); }
+}
+
+async function restaurar(id) {
+  try {
+    await api('/api/papelera/restaurar', { id });
+    await cargar();
+    say('ok', 'Póliza recuperada: volvió a la lista de Pólizas.');
   } catch (e) { falla(e); }
 }
 
@@ -637,7 +684,7 @@ function armarMensaje(texto, p, saludo) {
   const d = p.dias;
   const cuando = d == null ? '' : d < -1 ? `hace ${dd(-d)}` : d === -1 ? 'ayer' : d === 0 ? 'hoy' : d === 1 ? 'mañana' : `en ${dd(d)}`;
   const vence = d == null ? 'está por vencer' : d < 0 ? `venció ${cuando}` : `vence ${cuando}`;
-  const vars = { nombre: saludo, fecha: fechaLarga(p.vig_fin), cuando, vence, vehiculo: [p.marca, p.modelo].filter(Boolean).join(' ') || p.tipo || '', compania: p.compania || '', patente: p.patente || '' };
+  const vars = { nombre: saludo, fecha: fechaLarga(p.vig_fin), cuando, vence, vehiculo: [p.marca, p.modelo].filter(Boolean).join(' ') || p.tipo || '', compania: p.compania || '', patente: p.patente || '', mi_nombre: (S.config && S.config.wa_mi_nombre) || '', mi_numero: (S.config && S.config.wa_mi_numero) || '' };
   return String(texto || '').replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m))
     .replace(/ +\(\)/g, '').replace(/[ \t]{2,}/g, ' ').replace(/ +([,.;!?])/g, '$1').trim();
 }
@@ -658,6 +705,10 @@ function abrirWA(id) {
   waPol = p;
   const r = numeroWA(p.celular);
   $('#wa-para').innerHTML = `Para <b>${esc(nombre(p))}</b> · ${esc(r.mostrar)}${r.ok ? '' : ' <span class="err aviso" style="display:inline">· el número parece incompleto, revisalo</span>'}`;
+  const mi = S.config.wa_mi_numero;
+  $('#wa-emisor').innerHTML = mi
+    ? `Sale desde tu WhatsApp <b>${esc(mi)}</b>. Fijate que sea esa la cuenta abierta en la computadora.`
+    : 'Sale desde el WhatsApp que tengas abierto en la computadora. Podés guardar tu número en Configuración.';
   $('#wa-nombre').value = nombreSaludo(p);
   $('#wa-recordar').checked = false;
   $('#wa-err').textContent = '';
@@ -673,7 +724,10 @@ async function enviarWA(ev) {
   const texto = $('#wa-texto').value.trim();
   const r = numeroWA(waPol.celular);
   try {
-    await api('/api/abrir-url', { url: `https://wa.me/${r.num}${texto ? '?text=' + encodeURIComponent(texto) : ''}` });
+    const modo = S.config.wa_abrir || 'auto';
+    const t = texto ? '&text=' + encodeURIComponent(texto) : '';
+    const url = modo === 'escritorio' ? `whatsapp://send?phone=${r.num}${t}` : modo === 'web' ? `https://web.whatsapp.com/send?phone=${r.num}${t}` : `https://wa.me/${r.num}${texto ? '?text=' + encodeURIComponent(texto) : ''}`;
+    await api('/api/abrir-url', { url });
     const saludo = $('#wa-nombre').value.trim();
     if ($('#wa-recordar').checked && saludo && saludo !== waPol.trato) {
       const datos = Object.fromEntries(CAMPOS_FORM.map((k) => [k, waPol[k] || '']));
@@ -734,8 +788,93 @@ async function confirmarRenovar(ev) {
   } catch (e) { $('#rv-err').textContent = e.message; }
 }
 
-/* ---------- Configuración (tuerca) ---------- */
-const VARIABLES = [['nombre', 'Nombre'], ['fecha', 'Fecha de vencimiento'], ['vence', 'Vence en… / Venció hace…'], ['vehiculo', 'Vehículo'], ['compania', 'Compañía'], ['patente', 'Patente']];
+/* ---------- Archivos adjuntos ---------- */
+const tamTxt = (b) => (b < 1024 ? `${b} B` : b < 1048576 ? `${Math.round(b / 1024)} KB` : b < 1073741824 ? `${(b / 1048576).toFixed(1)} MB` : `${(b / 1073741824).toFixed(2)} GB`);
+function renderAdjuntos() {
+  const lista = S.adjuntos.filter((a) => a.poliza_id === S.fichaId);
+  const n = $('#fi-arch-n');
+  if (!n) return;
+  n.textContent = lista.length ? `· ${lista.length}` : '';
+  $('#fi-arch-list').innerHTML = lista.map((a) => `<li class="arch" data-id="${a.id}"><span class="arch-ic">${icon('file')}</span>
+    <div class="arch-t"><b title="${esc(a.nombre)}">${esc(a.nombre)}</b><small>${tamTxt(a.tam)} · ${fmtFecha((a.agregado_el || '').slice(0, 10))}</small></div>
+    <button type="button" class="btn" data-arch-abrir>Abrir</button>
+    <button type="button" class="icon-btn" data-arch-carpeta aria-label="Mostrar ${esc(a.nombre)} en la carpeta" title="Mostrar en la carpeta">${icon('folder')}</button>
+    <button type="button" class="icon-btn danger" data-arch-borrar aria-label="Eliminar el archivo ${esc(a.nombre)}" title="Eliminar">${icon('trash')}</button></li>`).join('');
+}
+function subirUno(pid, file, barra) {
+  return new Promise((res, rej) => {
+    const x = new XMLHttpRequest();
+    x.open('POST', `/api/adjuntos/subir?poliza=${pid}&nombre=${encodeURIComponent(file.name)}`);
+    x.setRequestHeader('X-Token', TOKEN);
+    x.upload.onprogress = (e) => { if (e.lengthComputable) barra(Math.round((e.loaded / e.total) * 100)); };
+    x.onload = () => {
+      let j = {};
+      try { j = JSON.parse(x.responseText); } catch { /* respuesta inválida */ }
+      if (x.status === 200 && j.ok) res(j); else rej(new Error(j.error || 'No se pudo guardar el archivo.'));
+    };
+    x.onerror = () => rej(new Error('Se cortó la conexión con el programa.'));
+    x.send(file);
+  });
+}
+async function subirArchivos(files) {
+  const pid = S.fichaId;
+  const lista = [...files];
+  if (!pid || !lista.length) return;
+  let ok = 0;
+  for (const f of lista) {
+    const li = document.createElement('li');
+    li.className = 'arch-p';
+    li.innerHTML = `<span>${esc(f.name)} · ${tamTxt(f.size)}</span><div class="barra"><i></i></div>`;
+    $('#fi-arch-prog').append(li);
+    try {
+      await subirUno(pid, f, (pc) => { li.querySelector('i').style.width = pc + '%'; });
+      ok++;
+      li.remove();
+    } catch (e) {
+      li.classList.add('err');
+      li.innerHTML = `<span>No se pudo guardar «${esc(f.name)}»: ${esc(e.message)}</span>`;
+      setTimeout(() => li.remove(), 12000);
+    }
+    await cargar();
+    renderAdjuntos();
+  }
+  if (ok) say('ok', `${ok} archivo${ok === 1 ? '' : 's'} guardado${ok === 1 ? '' : 's'} en la póliza.`);
+}
+function eventosAdjuntos() {
+  const fi = $('#fi-body');
+  fi.addEventListener('click', async (e) => {
+    if (e.target.closest('#fi-drop')) { $('#fi-arch-input').click(); return; }
+    const li = e.target.closest('.arch');
+    if (!li) return;
+    const id = Number(li.dataset.id);
+    try {
+      if (e.target.closest('[data-arch-abrir]')) await api('/api/adjuntos/abrir', { id });
+      else if (e.target.closest('[data-arch-carpeta]')) await api('/api/adjuntos/carpeta', { id });
+      else if (e.target.closest('[data-arch-borrar]')) {
+        const a = S.adjuntos.find((x) => x.id === id);
+        if (await confirmar({ titulo: 'Eliminar archivo', msg: `¿Eliminar «${a ? a.nombre : 'el archivo'}»? No se puede deshacer (si ya hiciste una copia de seguridad, ahí queda guardado).`, ok: 'Eliminar', peligro: true })) {
+          await api('/api/adjuntos/borrar', { id });
+          await cargar();
+          renderAdjuntos();
+          say('ok', 'Archivo eliminado.');
+        }
+      }
+    } catch (er) { falla(er); }
+  });
+  fi.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target.id === 'fi-drop') { e.preventDefault(); $('#fi-arch-input').click(); } });
+  fi.addEventListener('change', (e) => { if (e.target.id === 'fi-arch-input') { subirArchivos(e.target.files); e.target.value = ''; } });
+  const dlg = $('#dlg-ficha');
+  ['dragenter', 'dragover'].forEach((ev) => dlg.addEventListener(ev, (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); dlg.classList.add('arrastrando'); } }));
+  dlg.addEventListener('dragleave', (e) => { if (!dlg.contains(e.relatedTarget)) dlg.classList.remove('arrastrando'); });
+  dlg.addEventListener('drop', (e) => { e.preventDefault(); dlg.classList.remove('arrastrando'); if (e.dataTransfer.files.length) subirArchivos(e.dataTransfer.files); });
+  // soltar un archivo fuera de la zona no debe abrirlo en la ventana del programa
+  document.addEventListener('dragover', (e) => e.preventDefault());
+  document.addEventListener('drop', (e) => e.preventDefault());
+}
+
+/* ---------- Configuración (tuerca): pantalla dividida en secciones ---------- */
+const SECCIONES = { wa: 'WhatsApp', resp: 'Copia de seguridad', arch: 'Archivos adjuntos', pap: 'Papelera', rev: 'Revisar datos', prog: 'Programa' };
+const VARIABLES = [['nombre', 'Nombre'], ['fecha', 'Fecha de vencimiento'], ['vence', 'Vence en… / Venció hace…'], ['vehiculo', 'Vehículo'], ['compania', 'Compañía'], ['mi_nombre', 'Mi nombre'], ['mi_numero', 'Mi número']];
 let cfgTimer = null;
 function cfgGuardar() {
   clearTimeout(cfgTimer);
@@ -751,13 +890,17 @@ function ejemploWA() {
 }
 const vistaPrevia = (t) => { const p = ejemploWA(); return armarMensaje(t.texto, p, nombreSaludo(p)); };
 function tplHTML(t, i) {
-  return `<div class="tpl" data-i="${i}">
-    <div class="tpl-head"><input class="tpl-nombre" type="text" value="${esc(t.nombre)}" maxlength="60" aria-label="Nombre del mensaje">
-      <label class="tpl-pred"><input type="radio" name="pred" ${t.id === S.config.plantilla_pred ? 'checked' : ''}> Predeterminado</label>
-      <button type="button" class="icon-btn danger" data-tpl-del aria-label="Eliminar este mensaje">${icon('trash')}</button></div>
-    <textarea class="tpl-texto" rows="4" maxlength="1000" aria-label="Texto del mensaje">${esc(t.texto)}</textarea>
-    <div class="tpl-vars"><span>Agregar:</span>${VARIABLES.map(([k, n]) => `<button type="button" data-var="${k}">${n}</button>`).join('')}</div>
-    <div class="tpl-prev"><b>Así le llegaría:</b>\n<span class="tpl-prev-t">${esc(vistaPrevia(t))}</span></div></div>`;
+  const pred = t.id === S.config.plantilla_pred;
+  return `<details class="tpl" data-i="${i}" data-id="${esc(t.id)}"${S.tplAbiertos.has(t.id) ? ' open' : ''}>
+    <summary><span class="tpl-t">${esc(t.nombre)}</span><span class="tpl-badge"${pred ? '' : ' hidden'}>Predeterminado</span>${icon('chev-down', 'chev')}</summary>
+    <div class="tpl-cuerpo">
+      <div class="tpl-head"><input class="tpl-nombre" type="text" value="${esc(t.nombre)}" maxlength="60" aria-label="Nombre del mensaje">
+        <button type="button" class="icon-btn danger" data-tpl-del aria-label="Eliminar este mensaje">${icon('trash')}</button></div>
+      <textarea class="tpl-texto" rows="4" maxlength="1000" aria-label="Texto del mensaje">${esc(t.texto)}</textarea>
+      <div class="tpl-vars"><span>Agregar:</span>${VARIABLES.map(([k, n]) => `<button type="button" data-var="${k}">${n}</button>`).join('')}</div>
+      <label class="chk"><input type="radio" name="pred" ${pred ? 'checked' : ''}> Usar como mensaje predeterminado</label>
+      <div class="tpl-prev"><b>Así le llegaría:</b>\n<span class="tpl-prev-t">${esc(vistaPrevia(t))}</span></div>
+    </div></details>`;
 }
 function respaldoInfo() {
   const r = S.respaldo || {};
@@ -766,56 +909,192 @@ function respaldoInfo() {
   const f = new Date(r.ultimo);
   return { t: `Última copia: ${f.toLocaleDateString('es-AR')} a las ${f.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} · ${r.cantidad} copia${r.cantidad === 1 ? '' : 's'} guardada${r.cantidad === 1 ? '' : 's'}.` };
 }
-function renderConfig() {
-  const c = S.config, r = S.respaldo || {};
-  const info = respaldoInfo();
-  $('#cfg-body').innerHTML = `
-    <section class="cfg-sec"><h3>Mensajes de WhatsApp</h3>
+function secWA() {
+  const c = S.config;
+  const modos = [['auto', 'Lo que elija la computadora', 'Recomendado: abre la app de WhatsApp si la tenés, o WhatsApp Web.'],
+    ['escritorio', 'La aplicación de WhatsApp para Windows', 'Si la tenés instalada y con tu sesión abierta.'],
+    ['web', 'WhatsApp Web en el navegador', 'Abre web.whatsapp.com con tu sesión.']];
+  return `
+    <div class="cfg-card"><h4>Tu WhatsApp</h4>
+      <div class="grid2">
+        <div class="field"><label for="cfg-wa-num">Tu número</label><input id="cfg-wa-num" type="tel" inputmode="tel" value="${esc(c.wa_mi_numero)}" placeholder="Ej.: 381 412 3456" maxlength="30"></div>
+        <div class="field"><label for="cfg-wa-nom">Tu nombre <span class="opt">(para firmar)</span></label><input id="cfg-wa-nom" value="${esc(c.wa_mi_nombre)}" placeholder="Ej.: Marta" maxlength="60"></div>
+      </div>
+      <p class="cfg-nota"><b>Ojo:</b> los mensajes salen desde la cuenta de WhatsApp que tengas abierta en esta computadora. El programa no puede elegir el número por vos: lo guarda para recordártelo cada vez que enviás y para usarlo en tus mensajes con los botones «Mi número» y «Mi nombre».</p>
+      <fieldset class="cfg-radios"><legend>¿Cómo se abre WhatsApp?</legend>
+        ${modos.map(([v, t, d]) => `<label class="radio"><input type="radio" name="waabrir" value="${v}" ${(c.wa_abrir || 'auto') === v ? 'checked' : ''}><span><b>${t}</b><small>${d}</small></span></label>`).join('')}
+      </fieldset></div>
+    <div class="cfg-card"><h4>Tus mensajes</h4>
       <p class="sub">Escribilos como los dirías vos. Los botones «Agregar» ponen datos del cliente (nombre, fecha…) donde tengas el cursor. El botón de WhatsApp aparece solo en los clientes que tienen celular cargado.</p>
       <div id="cfg-tpls">${c.plantillas.map(tplHTML).join('') || '<p class="muted">No hay mensajes. Agregá el primero.</p>'}</div>
-      <div class="cfg-row"><button type="button" class="btn" id="cfg-add-tpl">${icon('plus')}Agregar mensaje</button><button type="button" class="link" id="cfg-reset-tpl">Volver a los mensajes originales</button></div>
-    </section>
-    <section class="cfg-sec"><h3>Copia de seguridad</h3>
-      <p class="sub">Protege tus pólizas si le pasa algo a la computadora. Se guarda una copia por día; las más viejas se borran solas.</p>
-      <label class="chk"><input type="checkbox" id="cfg-resp-on" ${c.respaldo_activo ? 'checked' : ''}> Hacer una copia todos los días (al abrir el programa)</label>
-      <div class="field" style="margin-top:16px"><label>Carpeta donde se guardan</label><p class="cfg-ruta" id="cfg-resp-ruta">${esc(r.carpeta || '')}</p>
-        <div class="cfg-row" style="margin-top:8px"><button type="button" class="btn" id="cfg-resp-cambiar">Cambiar carpeta…</button><button type="button" class="btn" id="cfg-resp-abrir">Abrir carpeta</button></div></div>
-      <div class="cfg-row"><label for="cfg-resp-n">Guardar las últimas</label><input id="cfg-resp-n" class="cfg-num" type="number" min="1" max="365" value="${c.respaldo_cantidad}"><span>copias</span></div>
-      <p class="cfg-info ${info.err ? 'err' : ''}" id="cfg-resp-info">${esc(info.t)}</p>
-      <div class="cfg-row"><button type="button" class="btn solid" id="cfg-resp-ahora">Hacer una copia ahora</button></div>
-      <p class="sub" style="margin-top:14px">Para volver a una copia: cerrá el programa y reemplazá <b>seguros.db</b> por la copia que elijas (con ese mismo nombre).</p>
-    </section>
-    <section class="cfg-sec"><h3>Programa</h3>
-      <div class="cfg-row" style="margin-top:0"><label for="cfg-pais">Código de país para WhatsApp</label><input id="cfg-pais" class="cfg-num" type="text" inputmode="numeric" value="${esc(c.codigo_pais)}" maxlength="4"><span class="sub">(Argentina: 54)</span></div>
-      <div class="cfg-row"><span>Versión ${esc(S.version)}</span><button type="button" class="btn" id="cfg-upd">Buscar actualizaciones</button></div>
-    </section>`;
+      <div class="chip-fila"><button type="button" class="btn" id="cfg-add-tpl">${icon('plus')}Agregar mensaje</button><button type="button" class="link" id="cfg-reset-tpl">Volver a los mensajes originales</button></div>
+    </div>`;
 }
-function abrirConfig() { renderConfig(); $('#cfg-estado').textContent = 'Los cambios se guardan solos.'; $('#dlg-config').showModal(); }
+function secResp() {
+  const c = S.config, r = S.respaldo || {}, info = respaldoInfo();
+  return `
+    <div class="cfg-card"><h4>Copia diaria</h4>
+      <p class="sub">Protege tus pólizas si le pasa algo a la computadora. Se guarda una copia por día y las más viejas se borran solas.</p>
+      <label class="chk"><input type="checkbox" id="cfg-resp-on" ${c.respaldo_activo ? 'checked' : ''}> Hacer una copia todos los días (al abrir el programa)</label>
+      <div class="cfg-row"><label for="cfg-resp-n">Guardar las últimas</label><input id="cfg-resp-n" class="cfg-num" type="number" min="1" max="365" value="${c.respaldo_cantidad}"><span>copias</span></div>
+      <div class="cfg-row"><label class="chk"><input type="checkbox" id="cfg-resp-arch" ${c.respaldo_archivos ? 'checked' : ''}> Incluir los archivos adjuntos</label></div>
+    </div>
+    <div class="cfg-card"><h4>Dónde se guardan</h4>
+      <p class="cfg-ruta" id="cfg-resp-ruta">${esc(r.carpeta || '')}</p>
+      <div class="cfg-row"><button type="button" class="btn" id="cfg-resp-cambiar">Cambiar carpeta…</button><button type="button" class="btn" id="cfg-resp-abrir">Abrir carpeta</button></div>
+      <p class="sub" style="margin-top:12px">Sirve elegir un pendrive o una carpeta de Drive: así la copia queda fuera de esta computadora.</p>
+    </div>
+    <div class="cfg-card"><h4>Estado</h4>
+      <p class="cfg-info ${info.err ? 'err' : ''}" id="cfg-resp-info" style="margin-top:0">${esc(info.t)}</p>
+      <div class="cfg-row"><button type="button" class="btn solid" id="cfg-resp-ahora">Hacer una copia ahora</button></div>
+      <p class="sub" style="margin-top:14px">Para volver a una copia: cerrá el programa y reemplazá <b>seguros.db</b> por la copia que elijas (con ese mismo nombre). Los archivos adjuntos están en la carpeta <b>Archivos</b> de la copia.</p>
+    </div>`;
+}
+function secArch() {
+  const a = S.archivos || { carpeta: '', cantidad: 0, bytes: 0 };
+  return `
+    <div class="cfg-card"><h4>Archivos de tus clientes</h4>
+      <p class="sub">Los archivos que arrastrás a la ficha de una póliza (DNI, cédula, fotos, la póliza escaneada…) se guardan en esta computadora, junto a tus datos. No hay límite de cantidad ni de tamaño: solo el espacio del disco.</p>
+      <div class="cfg-stats"><div class="cfg-stat"><b>${a.cantidad}</b><span>archivo${a.cantidad === 1 ? '' : 's'} guardado${a.cantidad === 1 ? '' : 's'}</span></div><div class="cfg-stat"><b>${tamTxt(a.bytes)}</b><span>ocupan en total</span></div></div>
+      <p class="cfg-ruta">${esc(a.carpeta)}</p>
+      <div class="cfg-row"><button type="button" class="btn" id="cfg-arch-abrir">${icon('folder')}Abrir la carpeta</button></div>
+    </div>
+    <div class="cfg-card"><h4>Cómo se usan</h4>
+      <p class="sub" style="margin:0">Abrí la ficha de una póliza y arrastrá los archivos a la zona punteada, o tocala para elegirlos. En la lista de pólizas, el clip junto al nombre indica que tiene archivos. Si anulás o reactivás una póliza, sus archivos se conservan; si la <b>eliminás</b>, se eliminan también (la copia de seguridad los guarda).</p>
+    </div>`;
+}
+function secProg() {
+  const c = S.config;
+  return `
+    <div class="cfg-card"><h4>Actualizaciones</h4>
+      <p class="sub">Con internet, el programa avisa solo cuando hay una versión nueva. Tus datos nunca se tocan al actualizar.</p>
+      <div class="cfg-row" style="margin-top:0"><span>Versión instalada: <b>${esc(S.version)}</b></span><button type="button" class="btn" id="cfg-upd">Buscar actualizaciones</button></div>
+    </div>
+    <div class="cfg-card"><h4>WhatsApp</h4>
+      <div class="cfg-row" style="margin-top:0"><label for="cfg-pais">Código de país</label><input id="cfg-pais" class="cfg-num" type="text" inputmode="numeric" value="${esc(c.codigo_pais)}" maxlength="4"><span class="sub">(Argentina: 54)</span></div>
+    </div>
+    <div class="cfg-card"><h4>Tus datos</h4>
+      <p class="sub" style="margin:0">Todo vive en esta computadora, en el archivo <b>seguros.db</b> y la carpeta <b>Archivos</b>. El programa funciona sin internet; solo se conecta para buscar actualizaciones y para abrir WhatsApp.</p>
+    </div>`;
+}
+function secPap() {
+  const l = S.papelera;
+  const faltan = (iso) => Math.max(0, 30 - Math.round((hoy() - new Date(iso + 'T00:00:00')) / 86400000));
+  return `<div class="cfg-card"><h4>Pólizas eliminadas</h4>
+    <p class="sub">Cuando eliminás una póliza no se pierde de inmediato: queda acá 30 días y la podés recuperar con todos sus datos y archivos. Pasado ese tiempo se borra para siempre.</p>
+    ${l.length ? `<ul class="pap-lista">${l.map((x) => `<li class="pap-item"><div class="pap-t"><b>${esc(x.asegurado || '(sin nombre)')}</b>
+      <small>${[x.patente, x.compania, x.nro_poliza && 'póliza ' + x.nro_poliza].filter(Boolean).map(esc).join(' · ')}</small>
+      <small>Eliminada el ${fmtFecha(x.eliminada_el)} · se borra para siempre en ${dd(faltan(x.eliminada_el))}</small></div>
+      <button type="button" class="btn" data-pap-rest="${x.id}">Recuperar</button>
+      <button type="button" class="icon-btn danger" data-pap-borrar="${x.id}" aria-label="Eliminar para siempre" title="Eliminar para siempre">${icon('trash')}</button></li>`).join('')}</ul>
+      <div class="cfg-row"><button type="button" class="btn quiet-danger" id="cfg-pap-vaciar">Vaciar la papelera</button></div>`
+    : '<p class="muted" style="margin:12px 0 0">La papelera está vacía.</p>'}</div>`;
+}
+
+/* Detector de datos raros: cosas que conviene mirar (no se corrige nada solo). */
+function revisar() {
+  const act = S.polizas, anio = hoy().getFullYear(), g = [];
+  const add = (k, titulo, desc, ids) => { if (ids.length) g.push({ k, titulo, desc, ids: [...new Set(ids)] }); };
+  const repetidas = (clave) => { const m = {}; act.forEach((p) => { const k = clave(p); if (k) (m[k] = m[k] || []).push(p.id); }); return Object.values(m).filter((a) => a.length > 1).flat(); };
+  add('dupnro', 'Mismo N° de póliza repetido', 'Dos o más pólizas tienen el mismo número. Puede ser una póliza cargada dos veces.', repetidas((p) => norm(p.nro_poliza)));
+  add('duppat', 'Misma patente y misma compañía', 'Parece la misma póliza cargada dos veces.', repetidas((p) => (norm(p.patente) ? norm(p.patente) + '|' + norm(p.compania) : '')));
+  add('sinfin', 'Sin fecha de fin de vigencia', 'No generan alertas de vencimiento.', act.filter((p) => !p.vig_fin).map((p) => p.id));
+  add('finantes', 'Fin de vigencia anterior al inicio', 'Las fechas están al revés.', act.filter((p) => p.vig_inicio && p.vig_fin && p.vig_fin < p.vig_inicio).map((p) => p.id));
+  add('anio', 'Fechas con un año raro', 'Por ejemplo 2065: casi seguro es un error al tipear.', act.filter((p) => [p.vig_inicio, p.vig_fin].some((f) => f && (Number(f.slice(0, 4)) < 2000 || Number(f.slice(0, 4)) > anio + 5))).map((p) => p.id));
+  add('larga', 'Vigencia de más de 2 años', 'Revisá que las fechas estén bien cargadas.', act.filter((p) => p.vig_inicio && p.vig_fin && p.vig_fin >= p.vig_inicio && (new Date(p.vig_fin) - new Date(p.vig_inicio)) / 86400000 > 730).map((p) => p.id));
+  add('vencidas', 'Vencidas hace más de 60 días', '¿Se renovaron? Si no siguen, conviene anularlas.', act.filter((p) => p.dias != null && p.dias < -60).map((p) => p.id));
+  add('sinnombre', 'Sin nombre del asegurado', '', act.filter((p) => !p.asegurado).map((p) => p.id));
+  add('sincia', 'Sin compañía', '', act.filter((p) => !p.compania).map((p) => p.id));
+  add('sinnro', 'Sin N° de póliza', '', act.filter((p) => !p.nro_poliza).map((p) => p.id));
+  add('cel', 'Celular que parece incompleto', 'Tiene menos de 8 dígitos, WhatsApp no lo va a poder abrir.', act.filter((p) => p.celular && p.celular.replace(/\D/g, '').length < 8).map((p) => p.id));
+  add('mail', 'E-mail que parece incompleto', 'Le falta la arroba o el dominio.', act.filter((p) => p.email && !/^\S+@\S+\.\S+$/.test(p.email)).map((p) => p.id));
+  return g;
+}
+function secRev() {
+  const g = revisar();
+  if (!g.length) return '<div class="rev-ok">Todo en orden: no encontré nada raro en tus pólizas.</div>';
+  const total = g.reduce((a, x) => a + x.ids.length, 0);
+  return `<p class="sub" style="margin:0 0 14px">Encontré <b>${g.length} tema${g.length === 1 ? '' : 's'}</b> para revisar (${total} póliza${total === 1 ? '' : 's'}). No se cambia nada solo: tocá «Abrir» para ver cada una y corregirla.</p>`
+    + g.map((x) => `<details class="rev-g"><summary><span class="t">${esc(x.titulo)}</span><span class="c">${x.ids.length}</span>${icon('chev-down', 'chev')}</summary>
+      <div class="rev-cuerpo">${x.desc ? `<p>${esc(x.desc)}</p>` : ''}${x.ids.slice(0, 40).map((id) => {
+        const p = S.polizas.find((z) => z.id === id);
+        return `<div class="rev-item"><span><b>${esc(nombre(p))}</b> <small>${[p.patente, p.compania, p.nro_poliza && 'póliza ' + p.nro_poliza].filter(Boolean).map(esc).join(' · ')}</small></span><button type="button" class="btn" data-rev-abrir="${id}">Abrir</button></div>`;
+      }).join('')}${x.ids.length > 40 ? `<p style="margin-top:8px">… y ${x.ids.length - 40} más.</p>` : ''}</div></details>`).join('');
+}
+function renderConfig() {
+  const sec = SECCIONES[S.cfgSec] ? S.cfgSec : 'wa';
+  S.cfgSec = sec;
+  $$('.cfg-nav [data-sec]').forEach((b) => b.setAttribute('aria-current', String(b.dataset.sec === sec)));
+  $('#cfg-sec-titulo').textContent = SECCIONES[sec];
+  $('#cfg-body').innerHTML = { wa: secWA, resp: secResp, arch: secArch, pap: secPap, rev: secRev, prog: secProg }[sec]();
+  const nP = S.papelera.length, nR = revisar().length;
+  $('.cfg-nav [data-sec="pap"] small').textContent = nP ? `${nP} eliminada${nP === 1 ? '' : 's'}` : 'Vacía';
+  $('.cfg-nav [data-sec="rev"] small').textContent = nR ? `${nR} tema${nR === 1 ? '' : 's'} para revisar` : 'Todo en orden';
+  $('#cfg-body').scrollTop = 0;
+}
+function abrirConfig(sec) {
+  if (sec) S.cfgSec = sec;
+  renderConfig();
+  $('#cfg-estado').textContent = 'Los cambios se guardan solos.';
+  $('#dlg-config').showModal();
+  ($('.cfg-nav [aria-current="true"]') || $('#cfg-x')).focus({ focusVisible: false });   // sin recuadro: la sección activa ya se ve marcada
+}
 
 function eventosConfig() {
-  $('#btn-config').addEventListener('click', abrirConfig);
+  $('#btn-config').addEventListener('click', () => abrirConfig());
   $('#cfg-x').addEventListener('click', () => $('#dlg-config').close());
+  $('.cfg-nav').addEventListener('click', (e) => { const b = e.target.closest('[data-sec]'); if (b) { S.cfgSec = b.dataset.sec; renderConfig(); } });
   const body = $('#cfg-body');
+  body.addEventListener('toggle', (e) => {
+    const d = e.target.closest && e.target.closest('.tpl');
+    if (d) { d.open ? S.tplAbiertos.add(d.dataset.id) : S.tplAbiertos.delete(d.dataset.id); }
+  }, true);
   body.addEventListener('input', (e) => {
     const tpl = e.target.closest('.tpl');
     if (tpl) {
       const t = S.config.plantillas[Number(tpl.dataset.i)];
-      if (e.target.classList.contains('tpl-nombre')) t.nombre = e.target.value;
+      if (e.target.classList.contains('tpl-nombre')) { t.nombre = e.target.value; $('.tpl-t', tpl).textContent = e.target.value || 'Mensaje'; }
       if (e.target.classList.contains('tpl-texto')) { t.texto = e.target.value; $('.tpl-prev-t', tpl).textContent = vistaPrevia(t); }
       cfgGuardar();
     }
     if (e.target.id === 'cfg-resp-n') { S.config.respaldo_cantidad = Math.max(1, Math.min(365, Number(e.target.value) || 30)); cfgGuardar(); }
     if (e.target.id === 'cfg-pais') { S.config.codigo_pais = e.target.value.replace(/\D/g, '') || '54'; cfgGuardar(); }
+    if (e.target.id === 'cfg-wa-num') { S.config.wa_mi_numero = e.target.value; cfgGuardar(); }
+    if (e.target.id === 'cfg-wa-nom') { S.config.wa_mi_nombre = e.target.value; cfgGuardar(); }
   });
   body.addEventListener('change', (e) => {
     const tpl = e.target.closest('.tpl');
-    if (tpl && e.target.matches('input[type="radio"]')) { S.config.plantilla_pred = S.config.plantillas[Number(tpl.dataset.i)].id; cfgGuardar(); }
+    if (tpl && e.target.matches('input[type="radio"]')) {
+      S.config.plantilla_pred = S.config.plantillas[Number(tpl.dataset.i)].id;
+      $$('.tpl', body).forEach((d) => { $('.tpl-badge', d).hidden = d.dataset.id !== S.config.plantilla_pred; });
+      cfgGuardar();
+    }
+    if (e.target.name === 'waabrir') { S.config.wa_abrir = e.target.value; cfgGuardar(); }
     if (e.target.id === 'cfg-resp-on') { S.config.respaldo_activo = e.target.checked; cfgGuardar(); }
+    if (e.target.id === 'cfg-resp-arch') { S.config.respaldo_archivos = e.target.checked; cfgGuardar(); }
   });
   body.addEventListener('click', async (e) => {
+    const pr = e.target.closest('[data-pap-rest]');
+    if (pr) { await restaurar(Number(pr.dataset.papRest)); renderConfig(); return; }
+    const pb = e.target.closest('[data-pap-borrar]');
+    if (pb) {
+      const x = S.papelera.find((z) => z.id === Number(pb.dataset.papBorrar));
+      if (await confirmar({ titulo: 'Eliminar para siempre', msg: `Se borra definitivamente la póliza de ${(x && x.asegurado) || '(sin nombre)'}, con sus archivos. No se puede deshacer.`, ok: 'Eliminar para siempre', peligro: true })) {
+        try { await api('/api/papelera/borrar', { ids: [Number(pb.dataset.papBorrar)] }); await cargar(); renderConfig(); say('ok', 'Póliza eliminada para siempre.'); } catch (er) { falla(er); }
+      }
+      return;
+    }
+    if (e.target.closest('#cfg-pap-vaciar')) {
+      if (await confirmar({ titulo: 'Vaciar la papelera', msg: `Se borran para siempre las ${S.papelera.length} pólizas de la papelera, con sus archivos. No se puede deshacer.`, ok: 'Vaciar', peligro: true })) {
+        try { await api('/api/papelera/borrar', { todo: true }); await cargar(); renderConfig(); say('ok', 'Papelera vaciada.'); } catch (er) { falla(er); }
+      }
+      return;
+    }
+    const ra = e.target.closest('[data-rev-abrir]');
+    if (ra) { $('#dlg-config').close(); abrirFicha(Number(ra.dataset.revAbrir)); return; }
     const v = e.target.closest('[data-var]');
     if (v) {
-      const tpl = v.closest('.tpl'), ta = $('.tpl-texto', tpl);
+      const ta = $('.tpl-texto', v.closest('.tpl'));
       const a = ta.selectionStart ?? ta.value.length, b = ta.selectionEnd ?? a;
       ta.setRangeText(`{${v.dataset.var}}`, a, b, 'end');
       ta.focus();
@@ -833,15 +1112,17 @@ function eventosConfig() {
       return;
     }
     if (e.target.closest('#cfg-add-tpl')) {
-      S.config.plantillas.push({ id: 'p-' + Math.random().toString(36).slice(2, 8), nombre: 'Mensaje nuevo', texto: 'Hola {nombre}, ' });
-      if (!S.config.plantilla_pred) S.config.plantilla_pred = S.config.plantillas[0].id;
+      const id = 'p-' + Math.random().toString(36).slice(2, 8);
+      S.config.plantillas.push({ id, nombre: 'Mensaje nuevo', texto: 'Hola {nombre}, ' });
+      if (!S.config.plantilla_pred) S.config.plantilla_pred = id;
+      S.tplAbiertos.add(id);
       renderConfig(); cfgGuardar();
-      const tp = $$('.tpl', body).pop(); if (tp) { $('.tpl-nombre', tp).focus(); $('.tpl-nombre', tp).select(); }
+      const tp = $$('.tpl', body).pop(); if (tp) { tp.scrollIntoView({ block: 'nearest' }); $('.tpl-nombre', tp).focus(); $('.tpl-nombre', tp).select(); }
       return;
     }
     if (e.target.closest('#cfg-reset-tpl')) {
       if (await confirmar({ titulo: 'Volver a los mensajes originales', msg: 'Se reemplazan tus mensajes por los 3 que trae el programa. Los que escribiste se pierden.', ok: 'Reemplazar', peligro: true })) {
-        try { const r = await api('/api/config', { config: { restaurar_plantillas: true } }); S.config = r.config; renderConfig(); $('#cfg-estado').textContent = 'Guardado ✓'; } catch (er) { falla(er); }
+        try { const r = await api('/api/config', { config: { restaurar_plantillas: true } }); S.config = r.config; S.tplAbiertos.clear(); renderConfig(); $('#cfg-estado').textContent = 'Guardado ✓'; } catch (er) { falla(er); }
       }
       return;
     }
@@ -858,8 +1139,9 @@ function eventosConfig() {
       return;
     }
     if (e.target.closest('#cfg-resp-abrir')) { try { await api('/api/respaldo/abrir', {}); } catch (er) { falla(er); } return; }
+    if (e.target.closest('#cfg-arch-abrir')) { try { await api('/api/adjuntos/carpeta', {}); } catch (er) { falla(er); } return; }
     if (e.target.closest('#cfg-resp-ahora')) {
-      const b = e.target.closest('#cfg-resp-ahora'); b.disabled = true;
+      const b = e.target.closest('#cfg-resp-ahora'); b.disabled = true; b.textContent = 'Copiando…';
       try { const r = await api('/api/respaldo/ahora', {}); S.respaldo = r.respaldo; say('ok', 'Copia de seguridad hecha.'); }
       catch (er) { falla(er); S.respaldo = (await api('/api/state')).respaldo; }
       renderConfig();
@@ -869,7 +1151,10 @@ function eventosConfig() {
   });
   // renovar y WhatsApp
   $('#fi-renovar').addEventListener('click', () => abrirRenovar(S.fichaId));
-  $('#fi-body').addEventListener('click', (e) => { if (e.target.closest('[data-wa-ficha]')) abrirWA(S.fichaId); });
+  $('#fi-body').addEventListener('click', (e) => {
+    if (e.target.closest('[data-wa-ficha]')) abrirWA(S.fichaId);
+    const o = e.target.closest('[data-ficha]'); if (o) abrirFicha(Number(o.dataset.ficha));
+  });
   $('#form-renovar').addEventListener('submit', confirmarRenovar);
   $('#rv-cancel').addEventListener('click', () => $('#dlg-renovar').close());
   $('#rv-dur').addEventListener('click', (e) => { const b = e.target.closest('[data-meses]'); if (b) rvDuracion(Number(b.dataset.meses)); });
@@ -877,8 +1162,10 @@ function eventosConfig() {
   $('#rv-fin').addEventListener('input', () => rvDuracion(0));
   $('#form-wa').addEventListener('submit', enviarWA);
   $('#wa-cancel').addEventListener('click', () => $('#dlg-wa').close());
+  $('#wa-config').addEventListener('click', () => { $('#dlg-wa').close(); abrirConfig('wa'); });
   $('#wa-tpl').addEventListener('click', (e) => { const b = e.target.closest('[data-tpl]'); if (b) { waTpl = b.dataset.tpl; waRender(); waAplicar(); } });
   $('#wa-nombre').addEventListener('input', waAplicar);
+  eventosAdjuntos();
 }
 
 /* ---------- Actualizaciones ---------- */
