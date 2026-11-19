@@ -30,7 +30,7 @@ STATIC = {"/app.css": "text/css; charset=utf-8", "/app.js": "text/javascript; ch
           "/favicon.svg": "image/svg+xml"}
 
 CAMPOS = ["nro_poliza", "asegurado", "patente", "tipo", "marca", "modelo", "email", "celular",
-          "compania", "vig_inicio", "vig_fin", "mios"]
+          "compania", "vig_inicio", "vig_fin", "mios", "trato"]
 
 
 def resolver_db():
@@ -55,7 +55,7 @@ def resolver_db():
 
 
 DB_PATH = resolver_db()
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.3.0"
 REPO = "Toomasmg/gestor-seguros"
 UPDATE = {"comprobado": False, "disponible": False, "version": "", "url": "", "sha": "", "tam": 0, "notas": "", "error": ""}
 VENTANA = None
@@ -154,9 +154,22 @@ def _m2(con):
             con.execute(f"ALTER TABLE polizas ADD COLUMN {nombre} {ddl}")
 
 
+def _m3(con):
+    """Nombre para saludar, configuración (mensajes, respaldo) e historial de renovaciones."""
+    if "trato" not in _cols(con, "polizas"):
+        con.execute("ALTER TABLE polizas ADD COLUMN trato TEXT DEFAULT ''")
+    con.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS config(clave TEXT PRIMARY KEY, valor TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS renovaciones(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, poliza_id INTEGER NOT NULL, hecha_el TEXT,
+            inicio_ant TEXT, fin_ant TEXT, nro_ant TEXT, inicio_nuevo TEXT, fin_nuevo TEXT, nro_nuevo TEXT);
+        """)
+
+
 # Para agregar campos o tablas en una versión futura: sumar acá (N, función). Se aplican en orden, una sola vez,
 # con respaldo automático de la base antes de tocarla.
-MIGRACIONES = [(1, _m1), (2, _m2)]
+MIGRACIONES = [(1, _m1), (2, _m2), (3, _m3)]
 
 
 def migrar(con, path):
@@ -256,8 +269,44 @@ class DB:
             self.con.execute("UPDATE polizas SET anulada=0, anulada_el='', motivo_anulacion='' WHERE id=?", (int(pid),))
             self.con.commit()
 
+    def config_get(self):
+        with self.lock:
+            out = {}
+            for r in self.con.execute("SELECT clave, valor FROM config"):
+                try:
+                    out[r["clave"]] = json.loads(r["valor"])
+                except ValueError:
+                    pass
+            return out
+
+    def config_set(self, cfg):
+        with self.lock:
+            for k, v in cfg.items():
+                self.con.execute("INSERT INTO config(clave, valor) VALUES(?, ?) ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor",
+                                 (k, json.dumps(v, ensure_ascii=False)))
+            self.con.commit()
+
+    def renovar(self, pid, inicio, fin, nro):
+        """La misma póliza pasa a un nuevo período; el anterior queda en el historial."""
+        with self.lock:
+            r = self.con.execute("SELECT nro_poliza, vig_inicio, vig_fin FROM polizas WHERE id=?", (int(pid),)).fetchone()
+            if not r:
+                return False
+            nro_nuevo = nro if nro else r["nro_poliza"]
+            self.con.execute("INSERT INTO renovaciones(poliza_id, hecha_el, inicio_ant, fin_ant, nro_ant, inicio_nuevo, fin_nuevo, nro_nuevo) "
+                             "VALUES(?,?,?,?,?,?,?,?)",
+                             (int(pid), date.today().isoformat(), r["vig_inicio"], r["vig_fin"], r["nro_poliza"], inicio, fin, nro_nuevo))
+            self.con.execute("UPDATE polizas SET vig_inicio=?, vig_fin=?, nro_poliza=? WHERE id=?", (inicio, fin, nro_nuevo, int(pid)))
+            self.con.commit()
+            return True
+
+    def renovaciones(self):
+        with self.lock:
+            return [dict(r) for r in self.con.execute("SELECT * FROM renovaciones ORDER BY id DESC")]
+
     def delete(self, ids):
         with self.lock:
+            self.con.executemany("DELETE FROM renovaciones WHERE poliza_id=?", [(int(i),) for i in ids])
             self.con.executemany("DELETE FROM polizas WHERE id=?", [(int(i),) for i in ids])
             self.con.commit()
 
@@ -537,6 +586,159 @@ def exportar_pdf(ids, vista, anuladas=False):
     return buf.getvalue()
 
 
+# ------------------------------------------------------------------ configuración y respaldo
+PLANTILLAS_BASE = [
+    {"id": "aviso", "nombre": "Aviso de vencimiento",
+     "texto": "Hola {nombre}, ¿cómo estás? Te escribo porque tu seguro {vence} ({fecha}). ¿Querés que te lo renueve? Cualquier cosa me avisás 🙂"},
+    {"id": "vencida", "nombre": "Ya venció",
+     "texto": "Hola {nombre}, ¿cómo andás? Tu seguro venció el {fecha}. Si querés lo regularizamos hoy mismo para que no quedes sin cobertura. Avisame y lo vemos."},
+    {"id": "renovada", "nombre": "Renovación lista",
+     "texto": "Hola {nombre}, ya renové tu seguro hasta el {fecha}. Cualquier consulta, estoy a disposición."},
+]
+CONFIG_DEF = {"plantillas": PLANTILLAS_BASE, "plantilla_pred": "aviso", "codigo_pais": "54",
+              "respaldo_activo": True, "respaldo_carpeta": "", "respaldo_cantidad": 30}
+RESPALDO = {"ultimo": "", "archivo": "", "error": ""}
+_PATRON_RESPALDO = re.compile(r"^seguros_\d{4}-\d{2}-\d{2}(_\d{6})?\.db$")
+
+
+def cargar_config():
+    cfg = json.loads(json.dumps(CONFIG_DEF))
+    cfg.update({k: v for k, v in db.config_get().items() if k in cfg})
+    return cfg
+
+
+def guardar_config(nuevo):
+    cfg = cargar_config()
+    if nuevo.get("restaurar_plantillas"):
+        cfg["plantillas"] = json.loads(json.dumps(PLANTILLAS_BASE))
+        cfg["plantilla_pred"] = "aviso"
+    if "plantillas" in nuevo:
+        cfg["plantillas"] = [
+            {"id": str(x.get("id") or f"p-{secrets.token_hex(3)}")[:40],
+             "nombre": (str(x.get("nombre") or "").strip()[:60] or "Mensaje"),
+             "texto": str(x.get("texto") or "")[:1000]}
+            for x in (nuevo.get("plantillas") or [])[:50] if isinstance(x, dict)]
+    if "plantilla_pred" in nuevo:
+        cfg["plantilla_pred"] = str(nuevo["plantilla_pred"])
+    ids = [x["id"] for x in cfg["plantillas"]]
+    if cfg["plantilla_pred"] not in ids:
+        cfg["plantilla_pred"] = ids[0] if ids else ""
+    if "codigo_pais" in nuevo:
+        cfg["codigo_pais"] = re.sub(r"\D", "", str(nuevo["codigo_pais"]))[:4] or "54"
+    if "respaldo_activo" in nuevo:
+        cfg["respaldo_activo"] = bool(nuevo["respaldo_activo"])
+    if "respaldo_carpeta" in nuevo:
+        cfg["respaldo_carpeta"] = str(nuevo["respaldo_carpeta"] or "").strip()[:300]
+    if "respaldo_cantidad" in nuevo:
+        cfg["respaldo_cantidad"] = max(1, min(365, int(nuevo["respaldo_cantidad"])))
+    db.config_set(cfg)
+    return cfg
+
+
+def carpeta_respaldo(cfg=None):
+    cfg = cfg or cargar_config()
+    if cfg["respaldo_carpeta"]:
+        return cfg["respaldo_carpeta"]
+    if os.environ.get("SEGUROS_DB"):                       # pruebas: nunca ensuciar Documentos
+        return DB_PATH + "_respaldos"
+    docs = os.path.join(os.path.expanduser("~"), "Documents")
+    return os.path.join(docs if os.path.isdir(docs) else APP_DIR, "Respaldos Gestor de Seguros")
+
+
+def _rotar_respaldos(carpeta, cantidad):
+    archivos = sorted((f for f in os.listdir(carpeta) if _PATRON_RESPALDO.match(f)), reverse=True)
+    for viejo in archivos[cantidad:]:
+        try:
+            os.remove(os.path.join(carpeta, viejo))
+        except OSError:
+            pass
+
+
+def hacer_respaldo(manual=False):
+    """Copia consistente de la base (aunque esté en uso) a la carpeta de respaldos. Nunca rompe el programa."""
+    cfg = cargar_config()
+    carpeta = carpeta_respaldo(cfg)
+    try:
+        os.makedirs(carpeta, exist_ok=True)
+        hoy = date.today().isoformat()
+        nombre = f"seguros_{hoy}_{datetime.now():%H%M%S}.db" if manual else f"seguros_{hoy}.db"
+        destino, tmp = os.path.join(carpeta, nombre), os.path.join(carpeta, nombre + ".tmp")
+        with db.lock:
+            dst = sqlite3.connect(tmp)
+            db.con.backup(dst)
+            dst.close()
+        os.replace(tmp, destino)
+        _rotar_respaldos(carpeta, int(cfg["respaldo_cantidad"]))
+        RESPALDO.update(ultimo=datetime.now().isoformat(timespec="seconds"), archivo=destino, error="")
+        return True, destino
+    except Exception as e:
+        RESPALDO.update(error=f"No se pudo guardar la copia en «{carpeta}»: {e}"[:300])
+        return False, RESPALDO["error"]
+
+
+def estado_respaldo():
+    cfg = cargar_config()
+    carpeta = carpeta_respaldo(cfg)
+    cantidad, ultimo = 0, RESPALDO["ultimo"]
+    try:
+        archivos = sorted(f for f in os.listdir(carpeta) if _PATRON_RESPALDO.match(f))
+        cantidad = len(archivos)
+        if archivos:
+            ultimo = datetime.fromtimestamp(os.path.getmtime(os.path.join(carpeta, archivos[-1]))).isoformat(timespec="seconds")
+    except OSError:
+        pass
+    return {"carpeta": carpeta, "ultimo": ultimo, "cantidad": cantidad, "error": RESPALDO["error"]}
+
+
+def _hilo_respaldo():
+    """Una copia por día: al abrir el programa y, si queda abierto, cada vez que cambia el día."""
+    time.sleep(3)
+    while True:
+        try:
+            cfg = cargar_config()
+            if cfg["respaldo_activo"]:
+                carpeta, hoy = carpeta_respaldo(cfg), date.today().isoformat()
+                ya = os.path.isdir(carpeta) and any(f.startswith(f"seguros_{hoy}") and _PATRON_RESPALDO.match(f) for f in os.listdir(carpeta))
+                if not ya:
+                    hacer_respaldo()
+        except Exception:
+            pass
+        time.sleep(1800)
+
+
+def elegir_carpeta():
+    """Selector de carpetas de Windows (sin depender de tkinter). Devuelve '' si se cancela."""
+    ps = ("[Console]::OutputEncoding=[Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; "
+          "$f=New-Object System.Windows.Forms.Form; $f.TopMost=$true; "
+          "$d=New-Object System.Windows.Forms.FolderBrowserDialog; "
+          "$d.Description='Elegí la carpeta donde guardar las copias de seguridad'; $d.ShowNewFolderButton=$true; "
+          "if ($d.ShowDialog($f) -eq 'OK') { Write-Output $d.SelectedPath }")
+    r = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps], capture_output=True, text=True,
+                       encoding="utf-8", creationflags=0x08000000, timeout=900)
+    return (r.stdout or "").strip()
+
+
+def renovar_datos(d):
+    """Valida y aplica una renovación. Devuelve (ok, error)."""
+    try:
+        pid = int(d.get("id"))
+    except (TypeError, ValueError):
+        return False, "Póliza inválida."
+    fin = str(d.get("fin") or "").strip()
+    inicio = str(d.get("inicio") or "").strip()
+    try:
+        datetime.strptime(fin, "%Y-%m-%d")
+    except ValueError:
+        return False, "Elegí hasta qué fecha se renueva."
+    if inicio:
+        try:
+            datetime.strptime(inicio, "%Y-%m-%d")
+        except ValueError:
+            inicio = ""
+    nro = re.sub(r"\s+", " ", str(d.get("nro_poliza") or "")).strip()[:60]
+    return (True, "") if db.renovar(pid, inicio, fin, nro) else (False, "No se encontró la póliza.")
+
+
 # ------------------------------------------------------------------ servidor HTTP
 class Handler(BaseHTTPRequestHandler):
     server_version = "Seguros"
@@ -598,7 +800,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             return self._send(200, {"ok": True, "polizas": db.polizas(), "companias": db.companias(),
                                     "alerta_dias": ALERTA_DIAS, "db": DB_PATH,
-                                    "version": APP_VERSION, "update": _estado_update()})
+                                    "version": APP_VERSION, "update": _estado_update(),
+                                    "config": cargar_config(), "respaldo": estado_respaldo(),
+                                    "renovaciones": db.renovaciones()})
         self._err("No encontrado", 404)
 
     def _auth(self):
@@ -631,6 +835,27 @@ class Handler(BaseHTTPRequestHandler):
                 db.add_compania(datos["compania"])
                 pid = db.save(datos, d.get("id"))
                 return self._send(200, {"ok": True, "id": pid})
+            if ruta == "/api/poliza/renovar":
+                ok, error = renovar_datos(d)
+                return self._send(200, {"ok": True}) if ok else self._err(error)
+            if ruta == "/api/config":
+                return self._send(200, {"ok": True, "config": guardar_config(d.get("config") or {})})
+            if ruta == "/api/respaldo/ahora":
+                ok, msg = hacer_respaldo(manual=True)
+                return self._send(200 if ok else 500, {"ok": ok, "error": None if ok else msg, "respaldo": estado_respaldo()})
+            if ruta == "/api/respaldo/carpeta":
+                return self._send(200, {"ok": True, "carpeta": elegir_carpeta()})
+            if ruta == "/api/respaldo/abrir":
+                carpeta = carpeta_respaldo()
+                os.makedirs(carpeta, exist_ok=True)
+                os.startfile(carpeta)
+                return self._send(200, {"ok": True})
+            if ruta == "/api/abrir-url":
+                url = str(d.get("url") or "")
+                if not url.startswith("https://wa.me/") or len(url) > 4000:
+                    return self._err("Dirección no permitida.", 403)
+                webbrowser.open(url)
+                return self._send(200, {"ok": True})
             if ruta == "/api/poliza/anular":
                 db.anular(d.get("id"), d.get("motivo"))
                 return self._send(200, {"ok": True})
@@ -858,6 +1083,7 @@ def main():
     global VENTANA
     VENTANA = abrir_ventana(f"http://127.0.0.1:{PORT}/")
     threading.Timer(4.0, comprobar_actualizacion).start()
+    threading.Thread(target=_hilo_respaldo, daemon=True).start()
     _vigilante(VENTANA)
 
 

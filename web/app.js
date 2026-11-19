@@ -61,7 +61,7 @@ const GRUPOS_CERRADOS = new Set(['b:90', 'b:mas']);
 /* ---------- Estado ---------- */
 const S = {
   page: 'polizas',
-  polizas: [], todas: [], anuladas: [], rowsAnul: [], qa: '', version: '', update: null, exportBtn: null, companias: [], dbPath: '',
+  polizas: [], todas: [], anuladas: [], rowsAnul: [], qa: '', version: '', update: null, exportBtn: null, config: null, respaldo: null, renov: {}, companias: [], dbPath: '',
   vista: store.get('vista3', 'todas'),
   q: '', estado: '', comp: '',
   sort: store.get('sort3', { k: 'dias', dir: 1 }),
@@ -129,6 +129,10 @@ async function cargar() {
   S.anuladas = S.todas.filter((p) => p.anulada);
   S.version = j.version;
   S.update = j.update;
+  S.config = j.config;
+  S.respaldo = j.respaldo;
+  S.renov = {};
+  (j.renovaciones || []).forEach((r) => { (S.renov[r.poliza_id] = S.renov[r.poliza_id] || []).push(r); });
   if (S.comp && !S.companias.some((c) => c.toLowerCase() === S.comp.toLowerCase())) S.comp = '';
   S.cargado = true;
   render();
@@ -241,7 +245,9 @@ function filaHTML(p, cols) {
   const tds = cols.map((c) => `<td data-label="${esc(c.t)}">${celda(p, c.k)}</td>`).join('');
   const acciones = p.anulada
     ? `<button type="button" class="icon-btn" data-react="${p.id}" aria-label="Reactivar la póliza de ${esc(nombre(p))}" title="Reactivar">${icon('undo')}</button>`
-    : `<button type="button" class="icon-btn" data-edit="${p.id}" aria-label="Editar la póliza de ${esc(nombre(p))}">${icon('pencil')}</button>
+    : `${p.celular ? `<button type="button" class="icon-btn" data-wa="${p.id}" aria-label="Enviar WhatsApp a ${esc(nombre(p))}" title="WhatsApp">${icon('chat')}</button>` : ''}
+      <button type="button" class="icon-btn" data-renew="${p.id}" aria-label="Renovar la póliza de ${esc(nombre(p))}" title="Renovar">${icon('refresh')}</button>
+      <button type="button" class="icon-btn" data-edit="${p.id}" aria-label="Editar la póliza de ${esc(nombre(p))}">${icon('pencil')}</button>
       <button type="button" class="icon-btn danger" data-del="${p.id}" aria-label="Eliminar la póliza de ${esc(nombre(p))}">${icon('trash')}</button>`;
   return `<tr class="row" data-id="${p.id}">${tds}<td class="c-act"><span class="acts">${acciones}</span></td></tr>`;
 }
@@ -443,21 +449,26 @@ function abrirFicha(id) {
     <section class="fi-sec"><h3>Vehículo</h3><dl class="fi-grid">
       ${f('Patente', p.patente && esc(p.patente), 'mono')}${f('Tipo', esc(p.tipo))}${f('Marca', esc(p.marca))}${f('Modelo', esc(p.modelo))}</dl></section>
     <section class="fi-sec"><h3>Contacto</h3><dl class="fi-grid">
-      ${f('Celular', esc(p.celular), 'mono')}${f('E-mail', mail)}</dl></section>
+      ${celularFicha(p)}${f('E-mail', mail)}${p.trato ? f('Nombre para saludar', esc(p.trato)) : ''}</dl></section>
     <section class="fi-sec"><h3>Cobertura</h3><dl class="fi-grid">
       ${f('Compañía', esc(p.compania))}${f('N° de póliza', esc(p.nro_poliza), 'mono')}
       ${f('Inicio de vigencia', fmtFecha(p.vig_inicio), 'mono')}${f('Fin de vigencia', fmtFecha(p.vig_fin), 'mono')}
       ${p.mios ? f('MIOS', esc(p.mios)) : ''}</dl></section>
     ${an ? `<section class="fi-sec"><h3>Anulación</h3><dl class="fi-grid">${f('Anulada el', fmtFecha(p.anulada_el), 'mono')}${f('Motivo', esc(p.motivo_anulacion))}</dl></section>` : ''}`;
+  const hist = S.renov[p.id] || [];
+  if (hist.length) {
+    $('#fi-body').insertAdjacentHTML('beforeend', `<section class="fi-sec"><h3>Renovaciones</h3><dl class="fi-grid">${hist.slice(0, 6).map((r) =>
+      f(`Renovada el ${fmtFecha(r.hecha_el)}`, `${r.inicio_nuevo ? fmtFecha(r.inicio_nuevo) + ' → ' : 'hasta '}${fmtFecha(r.fin_nuevo)}`, 'mono')).join('')}</dl></section>`);
+  }
   $('#fi-anular').hidden = an;
-  $('#fi-edit').hidden = an;
+  $('#fi-der').hidden = an;
   $('#fi-react').hidden = !an;
   $('#dlg-ficha').showModal();
-  (an ? $('#fi-react') : $('#fi-edit')).focus();
+  (an ? $('#fi-react') : $('#fi-renovar')).focus();
 }
 
 /* ---------- Formulario ---------- */
-const CAMPOS_FORM = ['nro_poliza', 'asegurado', 'patente', 'tipo', 'marca', 'modelo', 'email', 'celular', 'compania', 'vig_inicio', 'vig_fin', 'mios'];
+const CAMPOS_FORM = ['nro_poliza', 'asegurado', 'patente', 'tipo', 'marca', 'modelo', 'email', 'celular', 'compania', 'vig_inicio', 'vig_fin', 'mios', 'trato'];
 const nombre = (p) => (p && p.asegurado) || '(sin nombre)';
 const FM = () => $('#form').elements;
 let formInicial = '';
@@ -587,6 +598,287 @@ async function reactivar(id) {
     await cargar();
     say('ok', `Póliza reactivada: ${nombre(p)}. Volvió a la lista de Pólizas.`);
   } catch (e) { falla(e); }
+}
+
+/* ---------- WhatsApp ---------- */
+const celularFicha = (p) => `<div><dt>Celular</dt><dd class="${p.celular ? 'mono' : 'vacio'}">${p.celular
+  ? `${esc(p.celular)}${p.anulada ? '' : `<button type="button" class="btn wa-btn" data-wa-ficha>${icon('chat')}WhatsApp</button>`}` : 'Sin cargar'}</dd></div>`;
+
+/* Convierte lo que ella escribió ("381 4123456", "0381 15 4123456", "+54 9 381…") al formato que pide WhatsApp. */
+function numeroWA(raw) {
+  const pais = String((S.config && S.config.codigo_pais) || '54').replace(/\D/g, '').replace(/^549$/, '54');
+  let d = String(raw || '').replace(/\D/g, '');
+  let num = d;
+  if (pais === '54') {
+    if (d.startsWith('549') && d.length >= 12) num = d;
+    else if (d.startsWith('54') && d.length === 12) num = '549' + d.slice(2);
+    else {
+      d = d.replace(/^0+/, '');
+      if (d.length === 12) { const i = [2, 3, 4].find((k) => d.slice(k, k + 2) === '15'); if (i !== undefined) d = d.slice(0, i) + d.slice(i + 2); }
+      num = d.length === 11 && d.startsWith('9') ? '54' + d : '549' + d;
+    }
+  } else num = d.startsWith(pais) ? d : pais + d.replace(/^0+/, '');
+  const ok = pais === '54' ? /^549\d{10}$/.test(num) : num.length >= 9 && num.length <= 15;
+  return { num, ok, mostrar: '+' + num };
+}
+function nombreSaludo(p) {
+  if (p.trato) return p.trato;
+  const t = String(p.asegurado || '').replace(/\(.*?\)/g, '').trim().split(/\s+/).filter(Boolean);
+  if (!t.length) return '';
+  const w = t.length === 1 ? t[0] : (t.length <= 3 ? t[1] : t[2]);     // en el libro figura «APELLIDO NOMBRE»
+  return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+}
+function fechaLarga(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-').map(Number);
+  return `${d} de ${MESES_L[m - 1]}${y !== hoy().getFullYear() ? ' de ' + y : ''}`;
+}
+function armarMensaje(texto, p, saludo) {
+  const d = p.dias;
+  const cuando = d == null ? '' : d < -1 ? `hace ${dd(-d)}` : d === -1 ? 'ayer' : d === 0 ? 'hoy' : d === 1 ? 'mañana' : `en ${dd(d)}`;
+  const vence = d == null ? 'está por vencer' : d < 0 ? `venció ${cuando}` : `vence ${cuando}`;
+  const vars = { nombre: saludo, fecha: fechaLarga(p.vig_fin), cuando, vence, vehiculo: [p.marca, p.modelo].filter(Boolean).join(' ') || p.tipo || '', compania: p.compania || '', patente: p.patente || '' };
+  return String(texto || '').replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m))
+    .replace(/ +\(\)/g, '').replace(/[ \t]{2,}/g, ' ').replace(/ +([,.;!?])/g, '$1').trim();
+}
+let waPol = null, waTpl = null;
+function waRender() {
+  const tpls = (S.config && S.config.plantillas) || [];
+  $('#wa-tpl').innerHTML = tpls.length
+    ? tpls.map((t) => `<button type="button" data-tpl="${esc(t.id)}" aria-pressed="${t.id === waTpl}">${esc(t.nombre)}</button>`).join('')
+    : '<span class="muted">Todavía no tenés mensajes guardados: escribí uno acá abajo o creá los tuyos en Configuración (la tuerca).</span>';
+}
+function waAplicar() {
+  const t = ((S.config && S.config.plantillas) || []).find((x) => x.id === waTpl);
+  if (t) $('#wa-texto').value = armarMensaje(t.texto, waPol, $('#wa-nombre').value.trim());
+}
+function abrirWA(id) {
+  const p = S.polizas.find((x) => x.id === id);
+  if (!p || !p.celular) return;
+  waPol = p;
+  const r = numeroWA(p.celular);
+  $('#wa-para').innerHTML = `Para <b>${esc(nombre(p))}</b> · ${esc(r.mostrar)}${r.ok ? '' : ' <span class="err aviso" style="display:inline">· el número parece incompleto, revisalo</span>'}`;
+  $('#wa-nombre').value = nombreSaludo(p);
+  $('#wa-recordar').checked = false;
+  $('#wa-err').textContent = '';
+  waTpl = S.config.plantilla_pred || ((S.config.plantillas[0] || {}).id);
+  $('#wa-texto').value = '';
+  waRender();
+  waAplicar();
+  $('#dlg-wa').showModal();
+  $('#wa-texto').focus();
+}
+async function enviarWA(ev) {
+  ev.preventDefault();
+  const texto = $('#wa-texto').value.trim();
+  const r = numeroWA(waPol.celular);
+  try {
+    await api('/api/abrir-url', { url: `https://wa.me/${r.num}${texto ? '?text=' + encodeURIComponent(texto) : ''}` });
+    const saludo = $('#wa-nombre').value.trim();
+    if ($('#wa-recordar').checked && saludo && saludo !== waPol.trato) {
+      const datos = Object.fromEntries(CAMPOS_FORM.map((k) => [k, waPol[k] || '']));
+      datos.trato = saludo;
+      await api('/api/poliza', { id: waPol.id, datos });
+      await cargar();
+    }
+    $('#dlg-wa').close();
+    say('ok', `Se abrió WhatsApp con el mensaje para ${nombre(waPol)}. Falta que lo envíes.`);
+  } catch (e) { $('#wa-err').textContent = e.message; }
+}
+
+/* ---------- Renovar con un clic ---------- */
+let renovandoId = null;
+const sumarMeses = (iso, n) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  const f = new Date(y, m - 1 + n, d);
+  if (f.getDate() !== d) f.setDate(0);                      // 30/11 + 3 meses = 28/02, no 02/03
+  return toISO(f);
+};
+function rvPista() {
+  const fin = $('#rv-fin').value;
+  const h = $('#rv-hint');
+  if (!fin) { h.textContent = ''; h.className = 'vig-hint'; return; }
+  const d = diasHasta(fin);
+  h.className = 'vig-hint ' + (d < 0 ? 'vencida' : d <= ALERTA ? 'porvencer' : 'ok');
+  h.textContent = d < 0 ? 'Ojo: esa fecha ya pasó.' : `Va a quedar vigente hasta el ${fmtFecha(fin)} (${d === 0 ? 'hoy' : 'dentro de ' + dd(d)}).`;
+}
+function rvDuracion(meses) {
+  $('#form-renovar').dataset.meses = meses || '';
+  $$('#rv-dur button').forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.meses) === meses)));
+  if (meses && $('#rv-inicio').value) $('#rv-fin').value = sumarMeses($('#rv-inicio').value, meses);
+  rvPista();
+}
+function abrirRenovar(id) {
+  const p = S.polizas.find((x) => x.id === id);
+  if (!p) return;
+  renovandoId = id;
+  $('#rv-sub').textContent = `${nombre(p)}${p.vig_fin ? ` · ${p.dias < 0 ? 'venció' : 'vence'} el ${fmtFecha(p.vig_fin)}` : ' · sin fecha de vencimiento cargada'}`;
+  $('#rv-inicio').value = p.vig_fin || toISO(hoy());       // la nueva vigencia arranca donde terminó la anterior
+  $('#rv-nro').value = p.nro_poliza || '';
+  $('#rv-err').textContent = '';
+  rvDuracion(3);                                           // por defecto 3 meses; ella puede elegir otra duración o fecha
+  $('#dlg-renovar').showModal();
+  $('#rv-ok').focus();
+}
+async function confirmarRenovar(ev) {
+  ev.preventDefault();
+  const fin = $('#rv-fin').value;
+  if (!fin) { $('#rv-err').textContent = 'Elegí hasta qué fecha se renueva.'; return; }
+  const p = S.polizas.find((x) => x.id === renovandoId);
+  try {
+    await api('/api/poliza/renovar', { id: renovandoId, inicio: $('#rv-inicio').value, fin, nro_poliza: $('#rv-nro').value.trim() });
+    $('#dlg-renovar').close();
+    if ($('#dlg-ficha').open) $('#dlg-ficha').close();
+    await cargar();
+    say('ok', `Renovada: ${nombre(p)} hasta el ${fmtFecha(fin)}.`);
+  } catch (e) { $('#rv-err').textContent = e.message; }
+}
+
+/* ---------- Configuración (tuerca) ---------- */
+const VARIABLES = [['nombre', 'Nombre'], ['fecha', 'Fecha de vencimiento'], ['vence', 'Vence en… / Venció hace…'], ['vehiculo', 'Vehículo'], ['compania', 'Compañía'], ['patente', 'Patente']];
+let cfgTimer = null;
+function cfgGuardar() {
+  clearTimeout(cfgTimer);
+  $('#cfg-estado').textContent = 'Guardando…';
+  cfgTimer = setTimeout(async () => {
+    try { const r = await api('/api/config', { config: S.config }); S.config = r.config; $('#cfg-estado').textContent = 'Guardado ✓'; }
+    catch (e) { $('#cfg-estado').textContent = 'No se pudo guardar'; falla(e); }
+  }, 450);
+}
+function ejemploWA() {
+  return S.polizas.find((p) => p.celular && p.vig_fin) || S.polizas.find((p) => p.vig_fin)
+    || { asegurado: 'PEREZ JUAN', dias: 11, vig_fin: toISO(sumarDias(11)), marca: 'Ford', modelo: 'Fiesta', compania: 'ATM', patente: 'AB123CD' };
+}
+const vistaPrevia = (t) => { const p = ejemploWA(); return armarMensaje(t.texto, p, nombreSaludo(p)); };
+function tplHTML(t, i) {
+  return `<div class="tpl" data-i="${i}">
+    <div class="tpl-head"><input class="tpl-nombre" type="text" value="${esc(t.nombre)}" maxlength="60" aria-label="Nombre del mensaje">
+      <label class="tpl-pred"><input type="radio" name="pred" ${t.id === S.config.plantilla_pred ? 'checked' : ''}> Predeterminado</label>
+      <button type="button" class="icon-btn danger" data-tpl-del aria-label="Eliminar este mensaje">${icon('trash')}</button></div>
+    <textarea class="tpl-texto" rows="4" maxlength="1000" aria-label="Texto del mensaje">${esc(t.texto)}</textarea>
+    <div class="tpl-vars"><span>Agregar:</span>${VARIABLES.map(([k, n]) => `<button type="button" data-var="${k}">${n}</button>`).join('')}</div>
+    <div class="tpl-prev"><b>Así le llegaría:</b>\n<span class="tpl-prev-t">${esc(vistaPrevia(t))}</span></div></div>`;
+}
+function respaldoInfo() {
+  const r = S.respaldo || {};
+  if (r.error) return { t: r.error, err: true };
+  if (!r.ultimo) return { t: 'Todavía no se hizo ninguna copia.' };
+  const f = new Date(r.ultimo);
+  return { t: `Última copia: ${f.toLocaleDateString('es-AR')} a las ${f.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} · ${r.cantidad} copia${r.cantidad === 1 ? '' : 's'} guardada${r.cantidad === 1 ? '' : 's'}.` };
+}
+function renderConfig() {
+  const c = S.config, r = S.respaldo || {};
+  const info = respaldoInfo();
+  $('#cfg-body').innerHTML = `
+    <section class="cfg-sec"><h3>Mensajes de WhatsApp</h3>
+      <p class="sub">Escribilos como los dirías vos. Los botones «Agregar» ponen datos del cliente (nombre, fecha…) donde tengas el cursor. El botón de WhatsApp aparece solo en los clientes que tienen celular cargado.</p>
+      <div id="cfg-tpls">${c.plantillas.map(tplHTML).join('') || '<p class="muted">No hay mensajes. Agregá el primero.</p>'}</div>
+      <div class="cfg-row"><button type="button" class="btn" id="cfg-add-tpl">${icon('plus')}Agregar mensaje</button><button type="button" class="link" id="cfg-reset-tpl">Volver a los mensajes originales</button></div>
+    </section>
+    <section class="cfg-sec"><h3>Copia de seguridad</h3>
+      <p class="sub">Protege tus pólizas si le pasa algo a la computadora. Se guarda una copia por día; las más viejas se borran solas.</p>
+      <label class="chk"><input type="checkbox" id="cfg-resp-on" ${c.respaldo_activo ? 'checked' : ''}> Hacer una copia todos los días (al abrir el programa)</label>
+      <div class="field" style="margin-top:16px"><label>Carpeta donde se guardan</label><p class="cfg-ruta" id="cfg-resp-ruta">${esc(r.carpeta || '')}</p>
+        <div class="cfg-row" style="margin-top:8px"><button type="button" class="btn" id="cfg-resp-cambiar">Cambiar carpeta…</button><button type="button" class="btn" id="cfg-resp-abrir">Abrir carpeta</button></div></div>
+      <div class="cfg-row"><label for="cfg-resp-n">Guardar las últimas</label><input id="cfg-resp-n" class="cfg-num" type="number" min="1" max="365" value="${c.respaldo_cantidad}"><span>copias</span></div>
+      <p class="cfg-info ${info.err ? 'err' : ''}" id="cfg-resp-info">${esc(info.t)}</p>
+      <div class="cfg-row"><button type="button" class="btn solid" id="cfg-resp-ahora">Hacer una copia ahora</button></div>
+      <p class="sub" style="margin-top:14px">Para volver a una copia: cerrá el programa y reemplazá <b>seguros.db</b> por la copia que elijas (con ese mismo nombre).</p>
+    </section>
+    <section class="cfg-sec"><h3>Programa</h3>
+      <div class="cfg-row" style="margin-top:0"><label for="cfg-pais">Código de país para WhatsApp</label><input id="cfg-pais" class="cfg-num" type="text" inputmode="numeric" value="${esc(c.codigo_pais)}" maxlength="4"><span class="sub">(Argentina: 54)</span></div>
+      <div class="cfg-row"><span>Versión ${esc(S.version)}</span><button type="button" class="btn" id="cfg-upd">Buscar actualizaciones</button></div>
+    </section>`;
+}
+function abrirConfig() { renderConfig(); $('#cfg-estado').textContent = 'Los cambios se guardan solos.'; $('#dlg-config').showModal(); }
+
+function eventosConfig() {
+  $('#btn-config').addEventListener('click', abrirConfig);
+  $('#cfg-x').addEventListener('click', () => $('#dlg-config').close());
+  const body = $('#cfg-body');
+  body.addEventListener('input', (e) => {
+    const tpl = e.target.closest('.tpl');
+    if (tpl) {
+      const t = S.config.plantillas[Number(tpl.dataset.i)];
+      if (e.target.classList.contains('tpl-nombre')) t.nombre = e.target.value;
+      if (e.target.classList.contains('tpl-texto')) { t.texto = e.target.value; $('.tpl-prev-t', tpl).textContent = vistaPrevia(t); }
+      cfgGuardar();
+    }
+    if (e.target.id === 'cfg-resp-n') { S.config.respaldo_cantidad = Math.max(1, Math.min(365, Number(e.target.value) || 30)); cfgGuardar(); }
+    if (e.target.id === 'cfg-pais') { S.config.codigo_pais = e.target.value.replace(/\D/g, '') || '54'; cfgGuardar(); }
+  });
+  body.addEventListener('change', (e) => {
+    const tpl = e.target.closest('.tpl');
+    if (tpl && e.target.matches('input[type="radio"]')) { S.config.plantilla_pred = S.config.plantillas[Number(tpl.dataset.i)].id; cfgGuardar(); }
+    if (e.target.id === 'cfg-resp-on') { S.config.respaldo_activo = e.target.checked; cfgGuardar(); }
+  });
+  body.addEventListener('click', async (e) => {
+    const v = e.target.closest('[data-var]');
+    if (v) {
+      const tpl = v.closest('.tpl'), ta = $('.tpl-texto', tpl);
+      const a = ta.selectionStart ?? ta.value.length, b = ta.selectionEnd ?? a;
+      ta.setRangeText(`{${v.dataset.var}}`, a, b, 'end');
+      ta.focus();
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      return;
+    }
+    const del = e.target.closest('[data-tpl-del]');
+    if (del) {
+      const i = Number(del.closest('.tpl').dataset.i);
+      if (await confirmar({ titulo: 'Eliminar mensaje', msg: `¿Eliminar el mensaje «${S.config.plantillas[i].nombre}»?`, ok: 'Eliminar', peligro: true })) {
+        S.config.plantillas.splice(i, 1);
+        if (!S.config.plantillas.some((t) => t.id === S.config.plantilla_pred)) S.config.plantilla_pred = (S.config.plantillas[0] || {}).id || '';
+        renderConfig(); cfgGuardar();
+      }
+      return;
+    }
+    if (e.target.closest('#cfg-add-tpl')) {
+      S.config.plantillas.push({ id: 'p-' + Math.random().toString(36).slice(2, 8), nombre: 'Mensaje nuevo', texto: 'Hola {nombre}, ' });
+      if (!S.config.plantilla_pred) S.config.plantilla_pred = S.config.plantillas[0].id;
+      renderConfig(); cfgGuardar();
+      const tp = $$('.tpl', body).pop(); if (tp) { $('.tpl-nombre', tp).focus(); $('.tpl-nombre', tp).select(); }
+      return;
+    }
+    if (e.target.closest('#cfg-reset-tpl')) {
+      if (await confirmar({ titulo: 'Volver a los mensajes originales', msg: 'Se reemplazan tus mensajes por los 3 que trae el programa. Los que escribiste se pierden.', ok: 'Reemplazar', peligro: true })) {
+        try { const r = await api('/api/config', { config: { restaurar_plantillas: true } }); S.config = r.config; renderConfig(); $('#cfg-estado').textContent = 'Guardado ✓'; } catch (er) { falla(er); }
+      }
+      return;
+    }
+    if (e.target.closest('#cfg-resp-cambiar')) {
+      try {
+        const r = await api('/api/respaldo/carpeta', {});
+        if (r.carpeta) {
+          S.config.respaldo_carpeta = r.carpeta;
+          await api('/api/config', { config: { respaldo_carpeta: r.carpeta } });
+          S.respaldo = (await api('/api/state')).respaldo;
+          renderConfig(); $('#cfg-estado').textContent = 'Guardado ✓';
+        }
+      } catch (er) { falla(er); }
+      return;
+    }
+    if (e.target.closest('#cfg-resp-abrir')) { try { await api('/api/respaldo/abrir', {}); } catch (er) { falla(er); } return; }
+    if (e.target.closest('#cfg-resp-ahora')) {
+      const b = e.target.closest('#cfg-resp-ahora'); b.disabled = true;
+      try { const r = await api('/api/respaldo/ahora', {}); S.respaldo = r.respaldo; say('ok', 'Copia de seguridad hecha.'); }
+      catch (er) { falla(er); S.respaldo = (await api('/api/state')).respaldo; }
+      renderConfig();
+      return;
+    }
+    if (e.target.closest('#cfg-upd')) { buscarActualizacion(); }
+  });
+  // renovar y WhatsApp
+  $('#fi-renovar').addEventListener('click', () => abrirRenovar(S.fichaId));
+  $('#fi-body').addEventListener('click', (e) => { if (e.target.closest('[data-wa-ficha]')) abrirWA(S.fichaId); });
+  $('#form-renovar').addEventListener('submit', confirmarRenovar);
+  $('#rv-cancel').addEventListener('click', () => $('#dlg-renovar').close());
+  $('#rv-dur').addEventListener('click', (e) => { const b = e.target.closest('[data-meses]'); if (b) rvDuracion(Number(b.dataset.meses)); });
+  $('#rv-inicio').addEventListener('input', () => rvDuracion(Number($('#form-renovar').dataset.meses) || 0));
+  $('#rv-fin').addEventListener('input', () => rvDuracion(0));
+  $('#form-wa').addEventListener('submit', enviarWA);
+  $('#wa-cancel').addEventListener('click', () => $('#dlg-wa').close());
+  $('#wa-tpl').addEventListener('click', (e) => { const b = e.target.closest('[data-tpl]'); if (b) { waTpl = b.dataset.tpl; waRender(); waAplicar(); } });
+  $('#wa-nombre').addEventListener('input', waAplicar);
 }
 
 /* ---------- Actualizaciones ---------- */
@@ -772,6 +1064,8 @@ function eventos() {
         renderPolizas(contar());
         return;
       }
+      const wa = e.target.closest('[data-wa]'); if (wa) { abrirWA(Number(wa.dataset.wa)); return; }
+      const rn = e.target.closest('[data-renew]'); if (rn) { abrirRenovar(Number(rn.dataset.renew)); return; }
       const re = e.target.closest('[data-react]'); if (re) { reactivar(Number(re.dataset.react)); return; }
       const ed = e.target.closest('[data-edit]'); if (ed) { abrirForm(Number(ed.dataset.edit)); return; }
       const del = e.target.closest('[data-del]'); if (del) { eliminar(Number(del.dataset.del)); return; }
@@ -820,6 +1114,7 @@ function eventos() {
   $('#an-cancel').addEventListener('click', () => $('#dlg-anular').close());
   $('#q-anul').addEventListener('input', (e) => { S.qa = e.target.value; renderAnul(); });
   $('#btn-update').addEventListener('click', actualizar);
+  eventosConfig();
   // el botón «Exportar» de Anuladas abre el mismo menú que el de Pólizas
   $('#btn-export').addEventListener('click', () => { S.exportBtn = $('#btn-export'); });
   $('#btn-export-anul').addEventListener('click', () => { S.exportBtn = $('#btn-export-anul'); });
@@ -894,6 +1189,7 @@ function eventos() {
   irA('polizas');
   try {
     await cargar();
+    if (S.respaldo && S.respaldo.error) say('warn', S.respaldo.error, 25000);
     let yaAvisado = false;
     try { yaAvisado = sessionStorage.getItem('gs.aviso') === '1'; sessionStorage.setItem('gs.aviso', '1'); } catch { /* sin storage */ }
     if (!yaAvisado) abrirAlertas();

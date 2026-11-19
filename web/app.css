@@ -173,9 +173,12 @@ tr.grp td { position: sticky; top: 44px; z-index: 2; height: 46px; padding: 0; b
 .empty .row-btns { display: flex; gap: 10px; margin-top: 14px; }
 
 /* ================= Vencimientos: calendario mensual ================= */
-.venc-grid { display: grid; grid-template-columns: minmax(380px, 450px) minmax(0, 1fr); gap: 24px; align-items: start; }
+.venc-grid { display: grid; grid-template-columns: minmax(340px, 380px) minmax(0, 1fr); gap: 24px; align-items: start; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
-.cal { padding: 20px; }
+.cal { padding: 16px; }
+.acts .icon-btn { width: 30px; height: 30px; }
+#tabla-venc td[data-label="Asegurado"] { max-width: 190px; }
+#tabla-venc td { padding: 0 10px; }
 .cal-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .cal-nav h2 { font: 600 21px var(--serif); color: var(--paper); }
 .cal-ctl { display: flex; align-items: center; gap: 6px; }
@@ -251,6 +254,38 @@ input[type="checkbox"]:checked::before { transform: scale(1); }
 .err { color: var(--bad); font-size: 13px; font-weight: 500; }
 .err:empty { display: none; }
 .err.aviso { color: var(--warn); }
+textarea { width: 100%; padding: 12px 14px; min-height: 96px; background: var(--bg); border: 1px solid var(--line-2); border-radius: 8px; color: var(--paper); font: inherit; line-height: 1.5; resize: vertical; }
+textarea:hover { border-color: #4a584f; }
+textarea:focus { outline: 0; border-color: var(--paper); box-shadow: 0 0 0 1px var(--paper); }
+.gear { width: 40px; height: 40px; border: 1px solid var(--line-2); border-radius: 8px; color: var(--text); }
+.gear:hover { background: var(--panel-2); color: var(--paper); }
+.chk { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 14px; color: var(--text); }
+.wa-rec { align-self: end; min-height: 44px; }
+.wa-tpl { display: flex; flex-wrap: wrap; gap: 8px; }
+.wa-tpl button { height: 36px; padding: 0 14px; border: 1px solid var(--line-2); border-radius: 99px; background: none; color: var(--text); font-weight: 500; }
+.wa-tpl button:hover { background: var(--panel-2); }
+.wa-tpl button[aria-pressed="true"] { background: var(--paper); border-color: var(--paper); color: #17190f; font-weight: 600; }
+.wa-btn { height: 32px; padding: 0 12px; margin-left: 12px; font-size: 13.5px; vertical-align: middle; }
+#tabla-venc .acts { opacity: 1; }
+.cfg-sec { margin-bottom: 34px; }
+.cfg-sec h3 { margin-bottom: 4px; font: 600 17px var(--serif); color: var(--paper); }
+.cfg-sec > .sub { margin-bottom: 14px; }
+.cfg-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.tpl { margin-bottom: 14px; padding: 14px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; }
+.tpl-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.tpl-head input[type="text"], .tpl-nombre { flex: 1; height: 38px; font-weight: 600; }
+.tpl-pred { display: flex; align-items: center; gap: 7px; white-space: nowrap; font-size: 13px; color: var(--muted); cursor: pointer; }
+.tpl-pred input { width: 16px; height: 16px; accent-color: var(--paper); }
+.tpl-vars { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; color: var(--muted); }
+.tpl-vars button { height: 28px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 99px; background: none; color: var(--text); font-size: 13px; }
+.tpl-vars button:hover { background: var(--panel); color: var(--paper); }
+.tpl-prev { margin-top: 10px; padding: 10px 12px; border-left: 2px solid var(--line-2); color: var(--muted); font-size: 13.5px; white-space: pre-wrap; }
+.tpl-prev b { color: var(--text); font-weight: 500; }
+.cfg-info { margin: 10px 0 0; font-size: 14px; color: var(--muted); }
+.cfg-info.err { color: var(--bad); }
+.cfg-ruta { margin: 4px 0 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; font: 13px var(--mono); color: var(--text); overflow-wrap: anywhere; }
+.cfg-num { width: 90px !important; display: inline-block; }
+#rv-err { display: block; margin-top: 8px; }
 fieldset { min-width: 0; margin: 0 0 28px; padding: 0; border: 0; }
 legend { padding: 0 0 14px; font-size: 13.5px; font-weight: 600; color: var(--muted); }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
