@@ -22,3 +22,6 @@ Thumbs.db
 
 # Respaldos automáticos de la base
 *.respaldo*
+
+# Paquetes para entregar (llevan datos o binarios)
+Actualizacion_para_mama/
