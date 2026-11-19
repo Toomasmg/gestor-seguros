@@ -1,0 +1,21 @@
+﻿# Datos de clientes: NUNCA se suben
+seed/
+Entrega_para_mama/
+*.db
+*.db-*
+*.sqlite
+*.xlsx
+*.xlsm
+*.xls
+*.pdf
+
+# Compilación
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+
+# Pruebas y sistema
+.claude/
+Thumbs.db

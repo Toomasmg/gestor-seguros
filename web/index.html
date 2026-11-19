@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#111412">
+<meta name="token" content="__TOKEN__">
+<meta name="alerta-dias" content="__ALERTA__">
+<title>Gestor de Seguros</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+    <symbol id="i-chev-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="i-chev-left" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="m7 14 5-5 5 5"/></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+
+  <!-- ============ Cabecera: marca + secciones + acción principal ============ -->
+  <header class="top">
+    <div class="wrap top-in">
+      <div class="brand">
+        <svg class="seal" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="17.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="20" cy="20" r="13" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="1.6 2.4"/><path d="m13.5 20.5 4.5 4.5 8.5-9.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Gestor de Seguros</span>
+      </div>
+      <nav class="nav" aria-label="Secciones">
+        <button type="button" data-page="polizas">Pólizas</button>
+        <button type="button" data-page="venc">Vencimientos <b class="nav-n" id="nav-n" hidden>0</b></button>
+        <button type="button" data-page="comp">Compañías</button>
+      </nav>
+      <button type="button" class="btn solid" id="btn-nueva"><svg class="ic"><use href="#i-plus"/></svg>Nueva póliza</button>
+    </div>
+  </header>
+
+  <main class="main">
+    <div class="wrap">
+
+      <!-- ================= SECCIÓN 1: PÓLIZAS ================= -->
+      <section class="page" id="page-polizas" aria-labelledby="h-pol">
+        <div class="page-head">
+          <div class="ph-title">
+            <h1 id="h-pol">Pólizas</h1>
+            <p class="sub" id="pol-sub"></p>
+          </div>
+          <div class="search" role="search">
+            <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+            <label class="sr-only" for="q">Buscar por patente, asegurado o número de póliza</label>
+            <input id="q" type="search" placeholder="Buscar por patente, asegurado o N° de póliza" autocomplete="off" spellcheck="false">
+            <button type="button" class="ghost-x" id="q-clear" aria-label="Limpiar búsqueda" hidden><svg class="ic"><use href="#i-x"/></svg></button>
+          </div>
+          <div class="head-actions">
+            <button type="button" class="btn" id="btn-export" aria-haspopup="true" aria-expanded="false" commandfor="menu-export" command="toggle-popover"><svg class="ic"><use href="#i-download"/></svg>Exportar<svg class="ic sm"><use href="#i-chev-down"/></svg></button>
+            <button type="button" class="btn icon-only" id="btn-mas" aria-label="Más opciones" aria-haspopup="true" aria-expanded="false" commandfor="menu-mas" command="toggle-popover"><svg class="ic"><use href="#i-more"/></svg></button>
+            <input type="file" id="file-import" accept=".xlsx,.xlsm" hidden>
+          </div>
+        </div>
+
+        <div class="filters">
+          <div class="views" role="group" aria-label="Cómo ver la lista">
+            <button type="button" data-vista="todas" aria-pressed="false">Todas</button>
+            <button type="button" data-vista="compania" aria-pressed="false">Por compañía</button>
+            <button type="button" data-vista="venc" aria-pressed="false">Por vencimiento</button>
+          </div>
+          <label class="select"><span class="sr-only">Filtrar por compañía</span>
+            <select id="f-comp"></select></label>
+          <label class="select"><span class="sr-only">Filtrar por estado</span>
+            <select id="f-estado">
+              <option value="">Todos los estados</option>
+              <option value="vigente">Vigentes</option>
+              <option value="porvencer">Por vencer</option>
+              <option value="vencida">Vencidas</option>
+            </select></label>
+          <button type="button" class="link" id="f-limpiar" hidden>Quitar filtros</button>
+          <p class="notice" id="notice" hidden><span id="notice-t"></span><button type="button" class="link" data-ir="venc">Ver vencimientos</button></p>
+        </div>
+
+        <div class="table-card">
+          <div class="table-wrap" id="wrap-pol" role="region" aria-labelledby="h-pol" tabindex="0">
+            <table id="tabla-pol">
+              <caption class="sr-only">Pólizas de seguros</caption>
+              <thead id="thead-pol"></thead>
+              <tbody id="tbody-pol"></tbody>
+            </table>
+            <div class="empty" id="empty-pol" hidden></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SECCIÓN 2: VENCIMIENTOS ================= -->
+      <section class="page scroll" id="page-venc" aria-labelledby="h-venc" hidden>
+        <div class="page-head">
+          <div>
+            <h1 id="h-venc">Vencimientos</h1>
+            <p class="sub">La alerta salta <span class="alerta-dias"></span> días antes del fin de vigencia.</p>
+          </div>
+        </div>
+
+        <div class="venc-grid">
+          <div class="card cal">
+            <div class="cal-nav">
+              <h2 id="cal-titulo" aria-live="polite"></h2>
+              <div class="cal-ctl">
+                <button type="button" class="icon-btn" id="cal-prev" aria-label="Mes anterior"><svg class="ic"><use href="#i-chev-left"/></svg></button>
+                <button type="button" class="btn" id="cal-hoy">Hoy</button>
+                <button type="button" class="icon-btn" id="cal-next" aria-label="Mes siguiente"><svg class="ic"><use href="#i-chev-right"/></svg></button>
+              </div>
+            </div>
+            <div class="cal-sem" aria-hidden="true"><span>lun</span><span>mar</span><span>mié</span><span>jue</span><span>vie</span><span>sáb</span><span>dom</span></div>
+            <div class="cal-grid" id="cal-grid" role="group" aria-label="Calendario de vencimientos. Elegí un día marcado para ver sus pólizas."></div>
+            <ul class="cal-ley">
+              <li><i class="cal-pt vencida"></i>Ya vencidas</li>
+              <li><i class="cal-pt porvencer"></i>Por vencer (zona de alerta)</li>
+              <li><i class="cal-pt vigente"></i>Vencen más adelante</li>
+            </ul>
+          </div>
+
+          <div class="venc-lista">
+            <div class="filters" id="v-filters">
+              <div class="views" role="group" aria-label="Qué vencimientos ver" id="v-views">
+                <button type="button" data-vsub="alertas" aria-pressed="false">Requieren atención <b id="vn-alertas">0</b></button>
+                <button type="button" data-vsub="vencida" aria-pressed="false">Vencidas <b id="vn-vencida">0</b></button>
+                <button type="button" data-vsub="porvencer" aria-pressed="false">Por vencer <b id="vn-porvencer">0</b></button>
+                <button type="button" data-vsub="prox30" aria-pressed="false">Próximos 30 días <b id="vn-prox30">0</b></button>
+              </div>
+              <button type="button" class="link" id="v-dia-x" hidden></button>
+            </div>
+            <div class="table-card">
+              <div class="table-wrap flow" id="wrap-venc" role="region" aria-label="Lista de vencimientos" tabindex="0">
+                <table id="tabla-venc">
+                  <caption class="sr-only">Pólizas por vencimiento</caption>
+                  <thead id="thead-venc"></thead>
+                  <tbody id="tbody-venc"></tbody>
+                </table>
+                <div class="empty" id="empty-venc" hidden></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SECCIÓN 3: COMPAÑÍAS ================= -->
+      <section class="page scroll" id="page-comp" aria-labelledby="h-comp" hidden>
+        <div class="page-head">
+          <div>
+            <h1 id="h-comp">Compañías</h1>
+            <p class="sub">Las compañías que figuran al cargar una póliza. Podés agregar, renombrar o quitar.</p>
+          </div>
+        </div>
+
+        <form class="comp-add" id="comp-add" autocomplete="off">
+          <label for="comp-nueva">Nueva compañía</label>
+          <div class="comp-add-row">
+            <input id="comp-nueva" name="nombre" placeholder="Nombre de la compañía" maxlength="80" autocomplete="off">
+            <button type="submit" class="btn solid">Agregar</button>
+          </div>
+        </form>
+
+        <details class="card panel" id="panel-comp" open>
+          <summary><span>Compañía</span><span class="panel-n" id="comp-total"></span><svg class="ic chev" aria-hidden="true"><use href="#i-chev-down"/></svg></summary>
+          <table class="comp-table">
+            <caption class="sr-only">Compañías y cantidad de pólizas de cada una</caption>
+            <thead><tr><th scope="col">Nombre</th><th scope="col" class="r">Pólizas</th><th scope="col"><span class="sr-only">Acciones</span></th></tr></thead>
+            <tbody id="comp-list"></tbody>
+          </table>
+        </details>
+      </section>
+
+    </div>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap"><p id="msg" role="status" aria-live="polite"></p></div>
+  </footer>
+</div>
+
+<!-- Menús -->
+<div class="menu" id="menu-export" popover="auto" aria-label="Exportar">
+  <p class="menu-title">Exportar lo que ves en pantalla</p>
+  <button type="button" data-exp="xlsx"><b>Excel</b><span>.xlsx · se puede editar</span></button>
+  <button type="button" data-exp="pdf"><b>PDF</b><span>para imprimir o enviar</span></button>
+</div>
+<div class="menu" id="menu-mas" popover="auto" aria-label="Más opciones"></div>
+
+<!-- Ficha: SOLO LECTURA -->
+<dialog class="drawer" id="dlg-ficha" aria-labelledby="fi-nombre" closedby="any">
+  <div class="drawer-head">
+    <div>
+      <p class="fi-estado" id="fi-estado"></p>
+      <h2 id="fi-nombre"></h2>
+      <p class="sub" id="fi-sub"></p>
+    </div>
+    <button type="button" class="icon-btn" id="fi-x" aria-label="Cerrar"><svg class="ic"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="drawer-body" id="fi-body"></div>
+  <div class="drawer-foot">
+    <button type="button" class="btn quiet-danger" id="fi-del"><svg class="ic"><use href="#i-trash"/></svg>Eliminar</button>
+    <button type="button" class="btn solid" id="fi-edit" autofocus><svg class="ic"><use href="#i-pencil"/></svg>Editar póliza</button>
+  </div>
+</dialog>
+
+<!-- Formulario: crear / editar -->
+<dialog class="drawer" id="dlg-form" aria-labelledby="form-title" closedby="closerequest">
+  <form id="form" method="dialog" novalidate autocomplete="off">
+    <div class="drawer-head">
+      <div>
+        <h2 id="form-title">Nueva póliza</h2>
+        <p class="sub">Los campos con <span class="req">*</span> son obligatorios.</p>
+      </div>
+      <button type="button" class="icon-btn" id="form-x" aria-label="Cerrar sin guardar"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="drawer-body">
+      <fieldset>
+        <legend>Asegurado</legend>
+        <div class="grid2">
+          <div class="field"><label for="f-nro_poliza">N° de póliza <span class="req">*</span></label><input id="f-nro_poliza" name="nro_poliza" required maxlength="60" class="mono" autofocus><small class="err" id="e-nro_poliza"></small></div>
+          <div class="field"><label for="f-asegurado">Asegurado <span class="req">*</span></label><input id="f-asegurado" name="asegurado" required maxlength="120"><small class="err" id="e-asegurado"></small></div>
+          <div class="field"><label for="f-email">E-mail</label><input id="f-email" name="email" type="email" inputmode="email" maxlength="120"><small class="err" id="e-email"></small></div>
+          <div class="field"><label for="f-celular">Celular</label><input id="f-celular" name="celular" type="tel" inputmode="tel" maxlength="40"><small class="err" id="e-celular"></small></div>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Vehículo</legend>
+        <div class="grid2">
+          <div class="field"><label for="f-patente">Patente</label><input id="f-patente" name="patente" maxlength="12" class="mono"><small class="err"></small></div>
+          <div class="field"><label for="f-tipo">Tipo</label><input id="f-tipo" name="tipo" list="dl-tipo" maxlength="40"><small class="err"></small></div>
+          <div class="field"><label for="f-marca">Marca</label><input id="f-marca" name="marca" maxlength="40"><small class="err"></small></div>
+          <div class="field"><label for="f-modelo">Modelo</label><input id="f-modelo" name="modelo" maxlength="60"><small class="err"></small></div>
+        </div>
+        <datalist id="dl-tipo"><option value="Auto"><option value="Moto"><option value="Pick-up"><option value="Utilitario"><option value="Trailer"><option value="Bicicleta"><option value="Accidentes personales"></datalist>
+      </fieldset>
+      <fieldset>
+        <legend>Cobertura</legend>
+        <div class="field wide"><label for="f-compania">Compañía <span class="req">*</span></label>
+          <input id="f-compania" name="compania" list="dl-comp" required maxlength="80" placeholder="Elegí una o escribí una nueva">
+          <datalist id="dl-comp"></datalist>
+          <small class="err" id="e-compania"></small></div>
+        <div class="grid2">
+          <div class="field"><label for="f-vig_inicio">Inicio de vigencia <span class="req">*</span></label><input id="f-vig_inicio" name="vig_inicio" type="date" required><small class="err" id="e-vig_inicio"></small></div>
+          <div class="field"><label for="f-vig_fin">Fin de vigencia <span class="req">*</span></label><input id="f-vig_fin" name="vig_fin" type="date" required><small class="err" id="e-vig_fin"></small></div>
+        </div>
+        <p class="vig-hint" id="vig-hint" aria-live="polite"></p>
+        <div class="field short"><label for="f-mios">MIOS <span class="opt">(opcional)</span></label><input id="f-mios" name="mios" maxlength="20"><small class="err"></small></div>
+      </fieldset>
+    </div>
+    <div class="drawer-foot">
+      <p class="form-err" id="form-err" role="alert"></p>
+      <button type="button" class="btn" id="form-cancel">Cancelar</button>
+      <button type="submit" class="btn solid" id="form-save">Guardar póliza</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Confirmación -->
+<dialog class="modal" id="dlg-confirm" aria-labelledby="cf-title" aria-describedby="cf-msg">
+  <form method="dialog">
+    <h2 id="cf-title">Eliminar</h2>
+    <p id="cf-msg"></p>
+    <div class="modal-actions">
+      <button type="submit" class="btn" value="cancel" autofocus>Cancelar</button>
+      <button type="submit" class="btn danger" value="ok" id="cf-ok">Eliminar</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Renombrar compañía -->
+<dialog class="modal" id="dlg-rename" aria-labelledby="rn-title" closedby="any">
+  <form id="form-rename" method="dialog">
+    <h2 id="rn-title">Renombrar compañía</h2>
+    <p>El cambio se aplica también a todas sus pólizas.</p>
+    <div class="field"><label for="rn-input">Nuevo nombre</label><input id="rn-input" maxlength="80" autofocus autocomplete="off"><small class="err" id="rn-err"></small></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="rn-cancel">Cancelar</button>
+      <button type="submit" class="btn solid">Guardar</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Aviso de vencimientos (al abrir) -->
+<dialog class="modal wide" id="dlg-alertas" aria-labelledby="al-title" closedby="any">
+  <h2 id="al-title">Vencimientos próximos</h2>
+  <p id="al-sub"></p>
+  <ul class="al-list" id="al-list"></ul>
+  <div class="modal-actions">
+    <button type="button" class="btn" id="al-close" autofocus>Cerrar</button>
+    <button type="button" class="btn solid" id="al-ver">Ver vencimientos</button>
+  </div>
+</dialog>
+
+</body>
+</html>
