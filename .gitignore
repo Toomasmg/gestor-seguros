@@ -25,3 +25,8 @@ Thumbs.db
 
 # Paquetes para entregar (llevan datos o binarios)
 Actualizacion_para_mama/
+
+# Paquetes comprimidos para enviar
+*.rar
+*.zip
+*.7z
