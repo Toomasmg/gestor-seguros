@@ -55,7 +55,7 @@ def resolver_db():
 
 
 DB_PATH = resolver_db()
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 REPO = "Toomasmg/gestor-seguros"
 UPDATE = {"comprobado": False, "disponible": False, "version": "", "url": "", "sha": "", "tam": 0, "notas": "", "error": ""}
 VENTANA = None
@@ -761,10 +761,15 @@ for /l %%i in (1,1,120) do (
 )
 exit /b 1
 :listo
+set "PYINSTALLER_RESET_ENVIRONMENT=1"
 start "" "%VIEJO%"
 (goto) 2>nul & del "%~f0"
 ''')
-    subprocess.Popen(["cmd", "/c", bat], creationflags=0x00000208, close_fds=True)
+    # El programa nuevo NO debe heredar las variables internas de PyInstaller del actual (apuntan a una carpeta
+    # temporal que se borra al cerrar y lo dejarían trabado sin abrir).
+    entorno = {k: v for k, v in os.environ.items() if not k.startswith("_PYI") and k != "_MEIPASS2"}
+    entorno["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    subprocess.Popen(["cmd", "/c", bat], creationflags=0x00000208, close_fds=True, env=entorno)
     threading.Timer(1.2, _salir).start()
     return True, "Actualizando… el programa se reinicia solo."
 
