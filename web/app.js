@@ -36,7 +36,6 @@ const VENC_COLS = [
   { k: 'patente', t: 'Patente' },
   { k: 'compania', t: 'Compañía' },
   { k: 'vig_fin', t: 'Fin de vigencia' },
-  { k: 'contacto', t: 'Contacto' },
 ];
 const ANUL_COLS = [
   { k: 'asegurado', t: 'Asegurado' },
@@ -58,6 +57,37 @@ const POR_DEFECTO_OCULTAS = ['vig_inicio'];          // se pueden mostrar desde 
 const AUTO_SI_HAY_DATOS = ['email', 'celular', 'mios'];
 const GRUPOS_CERRADOS = new Set(['b:90', 'b:mas']);
 
+/* ---------- Panel lateral ---------- */
+const RAIL = store.get('rail', { w: 232, mini: false });
+function aplicarRail() {
+  const app = $('#app');
+  app.classList.toggle('mini', RAIL.mini);
+  app.style.setProperty('--rail-w', `${RAIL.mini ? 84 : RAIL.w}px`);
+  const b = $('#rail-toggle');
+  b.setAttribute('aria-expanded', String(!RAIL.mini));
+  b.setAttribute('aria-label', RAIL.mini ? 'Mostrar panel' : 'Ocultar panel');
+  $('#rail-toggle-t').textContent = RAIL.mini ? 'Mostrar panel' : 'Ocultar panel';
+  store.set('rail', RAIL);
+}
+function eventosRail() {
+  $('#rail-toggle').addEventListener('click', () => { RAIL.mini = !RAIL.mini; if (RAIL.w < 150) RAIL.w = 232; aplicarRail(); });
+  const grip = $('#grip');
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    const x0 = e.clientX, w0 = RAIL.mini ? 84 : RAIL.w;
+    $('#app').classList.add('arrastrando-panel'); grip.classList.add('arrastrando');
+    const mv = (ev) => {
+      const w = Math.max(84, Math.min(380, w0 + ev.clientX - x0));
+      if (w < 150) RAIL.mini = true; else { RAIL.mini = false; RAIL.w = Math.round(w); }
+      aplicarRail();
+    };
+    const up = () => { grip.removeEventListener('pointermove', mv); grip.removeEventListener('pointerup', up); grip.classList.remove('arrastrando'); $('#app').classList.remove('arrastrando-panel'); };
+    grip.addEventListener('pointermove', mv); grip.addEventListener('pointerup', up);
+  });
+  $('#brand').addEventListener('click', () => irA('polizas'));
+}
+
 /* ---------- Estado ---------- */
 const S = {
   page: 'polizas',
@@ -68,8 +98,8 @@ const S = {
   vsub: 'alertas', dia: null, mes: null,
   abiertos: new Set(), cerrados: new Set(GRUPOS_CERRADOS),
   cols: store.get('cols3', null),
-  editId: null, fichaId: null,
-  rowsPol: [], cargado: false,
+  editId: null, fichaId: null, fichaTab: 'datos',
+  rowsPol: [], cargado: false, auto: new Set(), anchoPol: 0,
 };
 
 /* ---------- Fechas y estados ---------- */
@@ -209,9 +239,20 @@ function filasVenc() {
   else r = r.filter((p) => p.dias >= 0 && p.dias <= DIAS_AGENDA);
   return r.sort((a, b) => a.dias - b.dias || cmp(a.asegurado, b.asegurado));
 }
-function columnasPol() {
+const PRIORIDAD_POL = ['mios', 'vig_inicio', 'email', 'tipo', 'marca', 'celular', 'modelo', 'nro_poliza', 'vig_fin'];
+const PRIORIDAD_VENC = ['compania', 'patente'];
+/* Si la tabla no entra a lo ancho, esconde de a una la columna menos importante hasta que entre. Devuelve true si escondió una. */
+function ajustarColumnas(wrapSel, cols, prioridad, auto) {
+  const w = $(wrapSel);
+  if (w.scrollWidth - w.clientWidth <= 2) return false;
+  const k = prioridad.find((x) => cols.some((c) => c.k === x) && !auto.has(x));
+  if (!k) return false;
+  auto.add(k);
+  return true;
+}
+function columnasPol(conAuto = true) {
   const vacia = (k) => !S.polizas.some((p) => p[k]);
-  return COLS.filter((c) => {
+  return COLS.filter((c) => !(conAuto && S.auto.has(c.k))).filter((c) => {
     if (S.cols && c.k in S.cols) return S.cols[c.k];
     if (POR_DEFECTO_OCULTAS.includes(c.k)) return false;
     if (AUTO_SI_HAY_DATOS.includes(c.k)) return !vacia(c.k);
@@ -228,11 +269,16 @@ function render() {
   const na = $('#nav-a');
   na.textContent = S.anuladas.length;
   na.hidden = !S.anuladas.length;
+  const nRev = revisar().length, nr = $('#nav-r');
+  nr.textContent = nRev; nr.hidden = !nRev;
+  const rs = S.respaldo || {};
+  $('#top-estado').textContent = 'Todo guardado en este equipo' + (rs.ultimo && !rs.error ? ` · última copia ${new Date(rs.ultimo).toLocaleDateString('es-AR', { day: 'numeric', month: 'short' })}` : '');
   $$('.alerta-dias').forEach((e) => { e.textContent = ALERTA; });
   $('#dl-comp').innerHTML = S.companias.map((n) => `<option value="${esc(n)}">`).join('');
   if (S.page === 'polizas') renderPolizas(c);
   else if (S.page === 'venc') renderVenc(c);
   else if (S.page === 'anul') renderAnul();
+  else if (S.page === 'rev') renderRev();
   else renderComp();
   renderUpdate();
   const m = $('#msg');
@@ -242,7 +288,7 @@ function render() {
 
 function irA(page) {
   S.page = page;
-  ['polizas', 'venc', 'anul', 'comp'].forEach((p) => { $('#page-' + p).hidden = p !== page; });
+  ['polizas', 'venc', 'anul', 'rev', 'comp'].forEach((p) => { $('#page-' + p).hidden = p !== page; });
   $$('.nav button').forEach((b) => (b.dataset.page === page ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')));
   if (page === 'venc' && !S.vsubElegido) S.vsub = contar().alertas ? 'alertas' : 'prox30';
   render();
@@ -286,6 +332,31 @@ function encabezado(cols, ordenable) {
   }).join('')}<th class="c-act" scope="col"><span class="sr-only">Acciones</span></th></tr>`;
 }
 
+/* ---------- Resumen de cartera y paginación ---------- */
+function renderKpis(c) {
+  $('#kpi-v').textContent = c.vencida; $('#kpi-p').textContent = c.porvencer; $('#kpi-g').textContent = c.vigente;
+  $$('#kpis .kpi').forEach((b) => b.setAttribute('aria-pressed', String(S.estado === b.dataset.kpi)));
+  const col = { v: 'var(--bad)', p: 'var(--warn)', g: '#3e9f61' };
+  $('#kpi-bar').innerHTML = [['v', c.vencida], ['p', c.porvencer], ['g', c.vigente]].filter((x) => x[1] > 0).map(([k, n]) => `<i style="flex:${n} 1 0;background:${col[k]}"></i>`).join('');
+}
+const PAG = { p: 0, pf: '', v: 0, vf: '' };
+function paginar(total, tam, k, firma) {
+  const tot = Math.max(1, Math.ceil(total / tam));
+  if (PAG[k + 'f'] !== firma) { PAG[k] = 0; PAG[k + 'f'] = firma; }       // al cambiar filtros se vuelve a la primera página
+  PAG[k] = Math.max(0, Math.min(PAG[k], tot - 1));
+  return { ini: PAG[k] * tam, fin: Math.min(total, PAG[k] * tam + tam), p: PAG[k], tot };
+}
+function pintarPager(id, g, total, mostrar = true) {
+  const el = $('#pager-' + id);
+  el.hidden = !mostrar || g.tot <= 1;
+  if (el.hidden) return;
+  $('#pager-' + id + '-t').textContent = `Mostrando ${g.ini + 1} a ${g.fin} de ${total}`;
+  $('#pager-' + id + '-pos').textContent = `Página ${g.p + 1} de ${g.tot}`;
+  $('#pager-' + id + '-ant').disabled = g.p === 0;
+  $('#pager-' + id + '-sig').disabled = g.p >= g.tot - 1;
+}
+const TAM_POL = 15, TAM_VENC = 4;
+
 /* ---------- Sección: Pólizas ---------- */
 function gruposPol(rows) {
   if (S.vista === 'compania') {
@@ -307,7 +378,8 @@ function gruposPol(rows) {
   ].map((b) => ({ ...b, rows: rows.filter((p) => b.test(p.dias)) })).filter((b) => b.rows.length);
 }
 
-function renderPolizas(c) {
+function renderPolizas(c, reintento = false) {
+  if (!reintento) S.auto = new Set();
   S.rowsPol = ordenarPol(filtrarPol());
   $$('#page-polizas .views button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.vista === S.vista)));
   const sc = $('#f-comp');
@@ -319,16 +391,16 @@ function renderPolizas(c) {
   $('#q-clear').hidden = !S.q;
   $('#pol-sub').textContent = hayFiltros() ? `Mostrando ${S.rowsPol.length} de ${S.polizas.length}` : `${S.polizas.length} en total`;
 
-  const n = $('#notice');
-  n.hidden = !c.alertas;
-  if (c.alertas) $('#notice-t').textContent = `${c.alertas} requieren atención`;
+  renderKpis(c);
 
   const cols = columnasPol();
   const agrupada = S.vista !== 'todas';
   $('#thead-pol').innerHTML = encabezado(cols, S.vista !== 'venc');
   let html;
+  const gp = paginar(S.rowsPol.length, TAM_POL, 'p', [S.q, S.estado, S.comp, S.vista, JSON.stringify(S.sort)].join('|'));
+  pintarPager('pol', gp, S.rowsPol.length, !agrupada);
   if (!agrupada) {
-    html = S.rowsPol.map((p) => filaHTML(p, cols)).join('');
+    html = S.rowsPol.slice(gp.ini, gp.fin).map((p) => filaHTML(p, cols)).join('');
   } else {
     html = gruposPol(S.rowsPol).map((g) => {
       const cerrado = !hayFiltros() && S.cerrados.has(g.key) && !S.abiertos.has(g.key);
@@ -343,6 +415,7 @@ function renderPolizas(c) {
   }
   $('#tbody-pol').innerHTML = html;
   vacio('pol', S.rowsPol.length);
+  if (S.rowsPol.length && ajustarColumnas('#wrap-pol', cols, PRIORIDAD_POL, S.auto)) renderPolizas(c, true);
 }
 
 function vacio(que, hay) {
@@ -366,7 +439,8 @@ function vacio(que, hay) {
 }
 
 /* ---------- Sección: Vencimientos ---------- */
-function renderVenc(c) {
+function renderVenc(c, reintento = false) {
+  if (!reintento) S.autoV = new Set();
   $('#vn-alertas').textContent = c.alertas;
   $('#vn-vencida').textContent = c.vencida;
   $('#vn-porvencer').textContent = c.porvencer;
@@ -377,10 +451,13 @@ function renderVenc(c) {
   if (S.dia !== null) { const [yy, mm, d2] = S.dia.split('-').map(Number); x.textContent = `Mostrando solo el ${d2} de ${MESES_L[mm - 1]} · Quitar`; }
 
   const rows = filasVenc();
-  const cols = VENC_COLS.filter((cc) => cc.k !== 'contacto' || rows.some((p) => p.celular || p.email));
+  const cols = VENC_COLS.filter((cc) => !(S.autoV && S.autoV.has(cc.k)));
   $('#thead-venc').innerHTML = encabezado(cols, false);
-  $('#tbody-venc').innerHTML = rows.map((p) => filaHTML(p, cols)).join('');
+  const gv = paginar(rows.length, TAM_VENC, 'v', [S.vsub, S.dia].join('|'));
+  $('#tbody-venc').innerHTML = rows.slice(gv.ini, gv.fin).map((p) => filaHTML(p, cols)).join('');
+  pintarPager('venc', gv, rows.length);
   vacio('venc', rows.length);
+  if (rows.length && ajustarColumnas('#wrap-venc', cols, PRIORIDAD_VENC, S.autoV)) { renderVenc(c, true); return; }
   renderGrafico();
 }
 
@@ -457,53 +534,72 @@ function confirmar({ titulo, msg, ok = 'Aceptar', peligro = false }) {
   });
 }
 
-/* ---------- Ficha (solo lectura) ---------- */
+/* ---------- Ficha: tarjeta flotante con pestañas ---------- */
+function pintarTabs() {
+  $$('#fi-tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === S.fichaTab)));
+  $$('#fi-body .fi-panel').forEach((d) => { d.hidden = d.dataset.panel !== S.fichaTab; });
+}
 function abrirFicha(id) {
   const p = S.todas.find((x) => x.id === id);
   if (!p) return;
+  if (S.fichaId !== id || !$('#dlg-ficha').open) S.fichaTab = 'datos';
   S.fichaId = id;
   const an = !!p.anulada;
   $('#fi-estado').innerHTML = an
-    ? `<span class="st anulada">Anulada el ${fmtFecha(p.anulada_el)}${p.motivo_anulacion ? ' · ' + esc(p.motivo_anulacion) : ''}</span>`
-    : `<span class="st ${p.est.k}">${esc(p.est.t)}${p.vig_fin ? ` · ${p.est.k === 'vencida' ? 'venció' : 'vence'} el ${fmtFecha(p.vig_fin)}` : ''}</span>`;
-  $('#fi-nombre').textContent = nombre(p);
-  $('#fi-sub').textContent = [p.nro_poliza && `Póliza ${p.nro_poliza}`, p.compania].filter(Boolean).join(' · ');
-  const f = (t, v, cls = '') => `<div><dt>${t}</dt><dd class="${v ? cls : 'vacio'}">${v ? v : 'Sin cargar'}</dd></div>`;
+    ? `<span class="st anulada">Anulada el ${fmtFecha(p.anulada_el)}</span>`
+    : `<span class="st ${p.est.k}">${esc(p.est.t)}</span>`;
+  const nom = nombre(p);
+  $('#fi-nombre').textContent = nom;
+  $('#fi-mono').textContent = (nom.replace(/[^A-Za-zÀ-ÿ ]/g, '').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('') || '?').toUpperCase();
+  $('#fi-sub').innerHTML = [p.nro_poliza && `<span class="mono">N° ${esc(p.nro_poliza)}</span>`, p.compania && esc(p.compania)].filter(Boolean).join('<br>');
+  const vg = $('#fi-vig');
+  vg.className = 'fi-vig ' + (an ? '' : p.est.k);
+  if (p.vig_inicio && p.vig_fin) {
+    const a = new Date(p.vig_inicio), b = new Date(p.vig_fin), tot = Math.max(1, (b - a) / 86400000);
+    const pc = Math.round(Math.min(1, Math.max(0, (hoy() - a) / 86400000 / tot)) * 100);
+    vg.innerHTML = `<div class="fi-vig-t"><span>${fmtFecha(p.vig_inicio)}</span><span>${fmtFecha(p.vig_fin)}</span></div><div class="fi-vig-bar"><i style="width:${pc}%"></i></div>`;
+  } else {
+    vg.innerHTML = p.vig_fin ? `<div class="fi-vig-t"><span>${p.est.k === 'vencida' ? 'Venció' : 'Vence'} el ${fmtFecha(p.vig_fin)}</span></div>` : '<div class="fi-vig-t"><span>Sin fecha de vigencia</span></div>';
+  }
+  const f = (t2, v, cls = '') => `<div><dt>${t2}</dt><dd class="${v ? cls : 'vacio'}">${v ? v : 'Sin cargar'}</dd></div>`;
   const mail = p.email ? `<a href="mailto:${esc(p.email)}">${esc(p.email)}</a>` : '';
-  $('#fi-body').innerHTML = `
-    <section class="fi-sec"><h3>Vehículo</h3><dl class="fi-grid">
-      ${f('Patente', p.patente && esc(p.patente), 'mono')}${f('Tipo', esc(p.tipo))}${f('Marca', esc(p.marca))}${f('Modelo', esc(p.modelo))}</dl></section>
-    <section class="fi-sec"><h3>Contacto</h3><dl class="fi-grid">
-      ${celularFicha(p)}${f('E-mail', mail)}${p.trato ? f('Nombre para saludar', esc(p.trato)) : ''}</dl></section>
-    <section class="fi-sec"><h3>Cobertura</h3><dl class="fi-grid">
-      ${f('Compañía', esc(p.compania))}${f('N° de póliza', esc(p.nro_poliza), 'mono')}
-      ${f('Inicio de vigencia', fmtFecha(p.vig_inicio), 'mono')}${f('Fin de vigencia', fmtFecha(p.vig_fin), 'mono')}
-      ${p.mios ? f('MIOS', esc(p.mios)) : ''}</dl></section>
-    ${an ? `<section class="fi-sec"><h3>Anulación</h3><dl class="fi-grid">${f('Anulada el', fmtFecha(p.anulada_el), 'mono')}${f('Motivo', esc(p.motivo_anulacion))}</dl></section>` : ''}`;
-  const hist = S.renov[p.id] || [];
-  if (hist.length) {
-    $('#fi-body').insertAdjacentHTML('beforeend', `<section class="fi-sec"><h3>Renovaciones</h3><dl class="fi-grid">${hist.slice(0, 6).map((r) =>
-      f(`Renovada el ${fmtFecha(r.hecha_el)}`, `${r.inicio_nuevo ? fmtFecha(r.inicio_nuevo) + ' → ' : 'hasta '}${fmtFecha(r.fin_nuevo)}`, 'mono')).join('')}</dl></section>`);
-  }
   const otras = otrasDelCliente(p);
-  if (otras.length) {
-    $('#fi-body').insertAdjacentHTML('beforeend', `<section class="fi-sec"><h3>Otras pólizas de este cliente <span class="n">· ${otras.length}</span></h3><ul class="otras">${otras.map((o) => `<li><button type="button" data-ficha="${o.id}">
-      <span class="st ${o.est.k}">${esc(o.est.t)}</span><span class="ot">${esc([o.marca, o.modelo].filter(Boolean).join(' ') || o.tipo || 'Póliza')}${o.patente ? ' · ' + esc(o.patente) : ''}</span><small>${esc(o.compania || '')}</small></button></li>`).join('')}</ul></section>`);
-  }
-  $('#fi-body').insertAdjacentHTML('beforeend', `<section class="fi-sec"><h3>Archivos <span class="n" id="fi-arch-n"></span></h3>
-    <div class="drop" id="fi-drop" tabindex="0" role="button" aria-label="Agregar archivos: arrastralos acá o presioná Enter para elegirlos">
-      ${icon('upload')}<span><b>Arrastrá los archivos acá</b></span><span>o <u>elegilos desde la computadora</u> · sin límite de cantidad ni de tamaño</span></div>
-    <input type="file" id="fi-arch-input" multiple hidden>
-    <ul class="arch-prog" id="fi-arch-prog" aria-live="polite"></ul>
-    <ul class="arch-list" id="fi-arch-list"></ul></section>`);
+  const hist = S.renov[p.id] || [];
+  $('#fi-body').innerHTML = `
+    <div class="fi-panel" data-panel="datos">
+      ${an ? `<section class="fi-sec"><h3>Anulación</h3><dl class="fi-grid">${f('Anulada el', fmtFecha(p.anulada_el), 'mono')}${f('Motivo', esc(p.motivo_anulacion))}</dl></section>` : ''}
+      <section class="fi-sec"><h3>Vehículo</h3><dl class="fi-grid cuatro">
+        ${f('Patente', p.patente && `<span class="plate">${esc(p.patente)}</span>`)}${f('Tipo', esc(p.tipo))}${f('Marca', esc(p.marca))}${f('Modelo', esc(p.modelo))}</dl></section>
+      <section class="fi-sec"><h3>Contacto</h3><dl class="fi-grid">
+        ${celularFicha(p)}${f('E-mail', mail)}${p.trato ? f('Nombre para saludar', esc(p.trato)) : ''}</dl></section>
+      <section class="fi-sec"><h3>Cobertura</h3><dl class="fi-grid">
+        ${f('Compañía', esc(p.compania))}${f('N° de póliza', esc(p.nro_poliza), 'mono')}
+        ${f('Inicio de vigencia', fmtFecha(p.vig_inicio), 'mono')}${f('Fin de vigencia', fmtFecha(p.vig_fin), 'mono')}
+        ${p.mios ? f('MIOS', esc(p.mios)) : ''}</dl></section>
+      ${otras.length ? `<section class="fi-sec"><h3>Otras pólizas de este cliente <span class="n">· ${otras.length}</span></h3><ul class="otras">${otras.map((o) => `<li><button type="button" data-ficha="${o.id}">
+        <span class="st ${o.est.k}">${esc(o.est.t)}</span><span class="ot">${esc([o.marca, o.modelo].filter(Boolean).join(' ') || o.tipo || 'Póliza')}${o.patente ? ' · ' + esc(o.patente) : ''}</span><small>${esc(o.compania || '')}</small></button></li>`).join('')}</ul></section>` : ''}
+    </div>
+    <div class="fi-panel" data-panel="arch" hidden>
+      <div class="drop" id="fi-drop" tabindex="0" role="button" aria-label="Agregar archivos: arrastralos acá o presioná Enter para elegirlos">
+        ${icon('upload')}<span><b>Arrastrá los archivos acá</b></span><span>o <u>elegilos desde la computadora</u> · sin límite de cantidad ni de tamaño</span></div>
+      <input type="file" id="fi-arch-input" multiple hidden>
+      <ul class="arch-prog" id="fi-arch-prog" aria-live="polite"></ul>
+      <ul class="arch-list" id="fi-arch-list"></ul>
+      <p class="muted" id="fi-arch-vacio" style="margin-top:14px" hidden>Todavía no hay archivos en esta póliza.</p>
+    </div>
+    <div class="fi-panel" data-panel="hist" hidden>
+      <section class="fi-sec"><h3>Renovaciones</h3>${hist.length ? `<dl class="fi-grid">${hist.slice(0, 12).map((r) =>
+        f(`Renovada el ${fmtFecha(r.hecha_el)}`, `${r.inicio_nuevo ? fmtFecha(r.inicio_nuevo) + ' → ' : 'hasta '}${fmtFecha(r.fin_nuevo)}`, 'mono')).join('')}</dl>` : '<p class="muted">Todavía no se renovó desde el programa.</p>'}</section>
+    </div>`;
   renderAdjuntos();
+  pintarTabs();
   $('#fi-anular').hidden = an;
   $('#fi-der').hidden = an;
   $('#fi-react').hidden = !an;
   const dlgF = $('#dlg-ficha');
   if (!dlgF.open) dlgF.showModal();
   $('#fi-body').scrollTop = 0;
-  (an ? $('#fi-react') : $('#fi-renovar')).focus();
+  (an ? $('#fi-react') : $('#fi-renovar')).focus({ focusVisible: false });
 }
 
 /* ---------- Formulario ---------- */
@@ -790,16 +886,43 @@ async function confirmarRenovar(ev) {
 
 /* ---------- Archivos adjuntos ---------- */
 const tamTxt = (b) => (b < 1024 ? `${b} B` : b < 1048576 ? `${Math.round(b / 1024)} KB` : b < 1073741824 ? `${(b / 1048576).toFixed(1)} MB` : `${(b / 1073741824).toFixed(2)} GB`);
+const urlAdj = (a) => `/adjunto/${a.id}?t=${encodeURIComponent(TOKEN)}`;
+const tipoAdj = (a) => (/\.(png|jpe?g|gif|webp|bmp)$/i.test(a.nombre) ? 'img' : /\.pdf$/i.test(a.nombre) ? 'pdf' : 'otro');
+const extAdj = (a) => ((/\.(\w{1,5})$/.exec(a.nombre) || [])[1] || 'ARCH').toUpperCase();
 function renderAdjuntos() {
   const lista = S.adjuntos.filter((a) => a.poliza_id === S.fichaId);
-  const n = $('#fi-arch-n');
+  const n = $('#fi-arch-list');
   if (!n) return;
-  n.textContent = lista.length ? `· ${lista.length}` : '';
-  $('#fi-arch-list').innerHTML = lista.map((a) => `<li class="arch" data-id="${a.id}"><span class="arch-ic">${icon('file')}</span>
-    <div class="arch-t"><b title="${esc(a.nombre)}">${esc(a.nombre)}</b><small>${tamTxt(a.tam)} · ${fmtFecha((a.agregado_el || '').slice(0, 10))}</small></div>
+  const tn = $('#fi-tab-arch-n');
+  tn.textContent = lista.length; tn.hidden = !lista.length;
+  $('#fi-arch-vacio').hidden = !!lista.length;
+  n.innerHTML = lista.map((a) => `<li class="arch" data-id="${a.id}">
+    <button type="button" class="arch-th" data-arch-ver aria-label="Ver ${esc(a.nombre)}">${tipoAdj(a) === 'img' ? `<img src="${urlAdj(a)}" alt="" loading="lazy">` : esc(extAdj(a))}</button>
+    <div class="arch-t"><button type="button" class="arch-ver" data-arch-ver><b title="${esc(a.nombre)}">${esc(a.nombre)}</b><small>${tamTxt(a.tam)} · ${fmtFecha((a.agregado_el || '').slice(0, 10))} · tocá para ver</small></button></div>
     <button type="button" class="btn" data-arch-abrir>Abrir</button>
     <button type="button" class="icon-btn" data-arch-carpeta aria-label="Mostrar ${esc(a.nombre)} en la carpeta" title="Mostrar en la carpeta">${icon('folder')}</button>
     <button type="button" class="icon-btn danger" data-arch-borrar aria-label="Eliminar el archivo ${esc(a.nombre)}" title="Eliminar">${icon('trash')}</button></li>`).join('');
+}
+
+/* ---------- Vista previa de un archivo ---------- */
+let prevLista = [], prevI = 0;
+function pintarPrev() {
+  const a = prevLista[prevI];
+  if (!a) return;
+  $('#pv-nombre').textContent = a.nombre;
+  $('#pv-sub').textContent = `${tamTxt(a.tam)} · ${prevI + 1} de ${prevLista.length}`;
+  const t2 = tipoAdj(a);
+  $('#pv-body').innerHTML = t2 === 'img' ? `<img src="${urlAdj(a)}" alt="${esc(a.nombre)}">`
+    : t2 === 'pdf' ? `<iframe title="Vista previa de ${esc(a.nombre)}" src="${urlAdj(a)}"></iframe>`
+    : `<div class="pv-otro"><div class="fi-mono" aria-hidden="true">${esc(extAdj(a))}</div><b>Este tipo de archivo no se puede ver acá</b><p>Abrilo con el programa de tu computadora (Word, Excel, etc.).</p></div>`;
+  $('#pv-ant').disabled = $('#pv-sig').disabled = prevLista.length < 2;
+}
+function abrirPrev(id) {
+  prevLista = S.adjuntos.filter((a) => a.poliza_id === S.fichaId);
+  prevI = Math.max(0, prevLista.findIndex((a) => a.id === id));
+  pintarPrev();
+  const d = $('#dlg-prev');
+  if (!d.open) d.showModal();
 }
 function subirUno(pid, file, barra) {
   return new Promise((res, rej) => {
@@ -848,7 +971,8 @@ function eventosAdjuntos() {
     if (!li) return;
     const id = Number(li.dataset.id);
     try {
-      if (e.target.closest('[data-arch-abrir]')) await api('/api/adjuntos/abrir', { id });
+      if (e.target.closest('[data-arch-ver]')) abrirPrev(id);
+      else if (e.target.closest('[data-arch-abrir]')) await api('/api/adjuntos/abrir', { id });
       else if (e.target.closest('[data-arch-carpeta]')) await api('/api/adjuntos/carpeta', { id });
       else if (e.target.closest('[data-arch-borrar]')) {
         const a = S.adjuntos.find((x) => x.id === id);
@@ -873,7 +997,7 @@ function eventosAdjuntos() {
 }
 
 /* ---------- Configuración (tuerca): pantalla dividida en secciones ---------- */
-const SECCIONES = { wa: 'WhatsApp', resp: 'Copia de seguridad', arch: 'Archivos adjuntos', pap: 'Papelera', rev: 'Revisar datos', prog: 'Programa' };
+const SECCIONES = { wa: 'WhatsApp', resp: 'Copia de seguridad', arch: 'Archivos adjuntos', pap: 'Papelera', prog: 'Programa' };
 const VARIABLES = [['nombre', 'Nombre'], ['fecha', 'Fecha de vencimiento'], ['vence', 'Vence en… / Venció hace…'], ['vehiculo', 'Vehículo'], ['compania', 'Compañía'], ['mi_nombre', 'Mi nombre'], ['mi_numero', 'Mi número']];
 let cfgTimer = null;
 function cfgGuardar() {
@@ -994,42 +1118,68 @@ function secPap() {
 /* Detector de datos raros: cosas que conviene mirar (no se corrige nada solo). */
 function revisar() {
   const act = S.polizas, anio = hoy().getFullYear(), g = [];
-  const add = (k, titulo, desc, ids) => { if (ids.length) g.push({ k, titulo, desc, ids: [...new Set(ids)] }); };
-  const repetidas = (clave) => { const m = {}; act.forEach((p) => { const k = clave(p); if (k) (m[k] = m[k] || []).push(p.id); }); return Object.values(m).filter((a) => a.length > 1).flat(); };
-  add('dupnro', 'Mismo N° de póliza repetido', 'Dos o más pólizas tienen el mismo número. Puede ser una póliza cargada dos veces.', repetidas((p) => norm(p.nro_poliza)));
-  add('duppat', 'Misma patente y misma compañía', 'Parece la misma póliza cargada dos veces.', repetidas((p) => (norm(p.patente) ? norm(p.patente) + '|' + norm(p.compania) : '')));
-  add('sinfin', 'Sin fecha de fin de vigencia', 'No generan alertas de vencimiento.', act.filter((p) => !p.vig_fin).map((p) => p.id));
-  add('finantes', 'Fin de vigencia anterior al inicio', 'Las fechas están al revés.', act.filter((p) => p.vig_inicio && p.vig_fin && p.vig_fin < p.vig_inicio).map((p) => p.id));
-  add('anio', 'Fechas con un año raro', 'Por ejemplo 2065: casi seguro es un error al tipear.', act.filter((p) => [p.vig_inicio, p.vig_fin].some((f) => f && (Number(f.slice(0, 4)) < 2000 || Number(f.slice(0, 4)) > anio + 5))).map((p) => p.id));
-  add('larga', 'Vigencia de más de 2 años', 'Revisá que las fechas estén bien cargadas.', act.filter((p) => p.vig_inicio && p.vig_fin && p.vig_fin >= p.vig_inicio && (new Date(p.vig_fin) - new Date(p.vig_inicio)) / 86400000 > 730).map((p) => p.id));
-  add('vencidas', 'Vencidas hace más de 60 días', '¿Se renovaron? Si no siguen, conviene anularlas.', act.filter((p) => p.dias != null && p.dias < -60).map((p) => p.id));
-  add('sinnombre', 'Sin nombre del asegurado', '', act.filter((p) => !p.asegurado).map((p) => p.id));
-  add('sincia', 'Sin compañía', '', act.filter((p) => !p.compania).map((p) => p.id));
-  add('sinnro', 'Sin N° de póliza', '', act.filter((p) => !p.nro_poliza).map((p) => p.id));
-  add('cel', 'Celular que parece incompleto', 'Tiene menos de 8 dígitos, WhatsApp no lo va a poder abrir.', act.filter((p) => p.celular && p.celular.replace(/\D/g, '').length < 8).map((p) => p.id));
-  add('mail', 'E-mail que parece incompleto', 'Le falta la arroba o el dominio.', act.filter((p) => p.email && !/^\S+@\S+\.\S+$/.test(p.email)).map((p) => p.id));
+  /* Cada hallazgo dice POR QUÉ aparece (motivo) y, si corresponde, con qué otra póliza se parece (otros). */
+  const add = (k, titulo, desc, items) => {
+    const m = new Map();
+    items.forEach((it) => { if (!m.has(it.id)) m.set(it.id, it); });
+    if (m.size) g.push({ k, titulo, desc, items: [...m.values()], ids: [...m.keys()] });
+  };
+  const de = (lista, f) => lista.map((p) => ({ id: p.id, motivo: f(p) }));
+  const repetidas = (clave, motivo) => {
+    const m = {};
+    act.forEach((p) => { const k = clave(p); if (k) (m[k] = m[k] || []).push(p); });
+    return Object.values(m).filter((a) => a.length > 1).flatMap((a) => a.map((p) => ({ id: p.id, motivo: motivo(p, a.length), otros: a.filter((x) => x.id !== p.id) })));
+  };
+  const anios = (p) => [p.vig_inicio, p.vig_fin].filter((f) => f && (Number(f.slice(0, 4)) < 2000 || Number(f.slice(0, 4)) > anio + 5));
+  add('dupnro', 'Mismo N° de póliza repetido', 'Dos o más pólizas tienen el mismo número. Puede ser una póliza cargada dos veces.',
+    repetidas((p) => norm(p.nro_poliza), (p, n) => `El N° de póliza ${p.nro_poliza} figura en ${n} pólizas.`));
+  add('duppat', 'Misma patente y misma compañía', 'Parece la misma póliza cargada dos veces.',
+    repetidas((p) => (norm(p.patente) ? norm(p.patente) + '|' + norm(p.compania) : ''), (p) => `La patente ${p.patente} está cargada más de una vez en ${p.compania || 'la misma compañía'}.`));
+  add('sinfin', 'Sin fecha de fin de vigencia', 'No generan alertas de vencimiento.',
+    de(act.filter((p) => !p.vig_fin), () => 'No tiene fecha de fin de vigencia, así que el programa nunca te avisa cuando venza.'));
+  add('finantes', 'Fin de vigencia anterior al inicio', 'Las fechas están al revés.',
+    de(act.filter((p) => p.vig_inicio && p.vig_fin && p.vig_fin < p.vig_inicio), (p) => `Termina el ${fmtFecha(p.vig_fin)} pero empieza el ${fmtFecha(p.vig_inicio)}: parecen estar al revés.`));
+  add('anio', 'Fechas con un año raro', 'Por ejemplo 2065: casi seguro es un error al tipear.',
+    de(act.filter((p) => anios(p).length), (p) => `Tiene una fecha con un año fuera de lo normal: ${anios(p).map(fmtFecha).join(' y ')}.`));
+  add('larga', 'Vigencia de más de 2 años', 'Revisá que las fechas estén bien cargadas.',
+    de(act.filter((p) => p.vig_inicio && p.vig_fin && p.vig_fin >= p.vig_inicio && (new Date(p.vig_fin) - new Date(p.vig_inicio)) / 86400000 > 730),
+      (p) => `Va del ${fmtFecha(p.vig_inicio)} al ${fmtFecha(p.vig_fin)}: son ${Math.round((new Date(p.vig_fin) - new Date(p.vig_inicio)) / 31557600000 * 10) / 10} años.`));
+  add('vencidas', 'Vencidas hace más de 60 días', '¿Se renovaron? Si no siguen, conviene anularlas.',
+    de(act.filter((p) => p.dias != null && p.dias < -60), (p) => `Venció el ${fmtFecha(p.vig_fin)} (hace ${dd(-p.dias)}) y sigue cargada como activa.`));
+  add('sinnombre', 'Sin nombre del asegurado', '', de(act.filter((p) => !p.asegurado), () => 'No tiene cargado el nombre del asegurado.'));
+  add('sincia', 'Sin compañía', '', de(act.filter((p) => !p.compania), () => 'No tiene compañía: no se puede ver en «Por compañía».'));
+  add('sinnro', 'Sin N° de póliza', '', de(act.filter((p) => !p.nro_poliza), () => 'No tiene número de póliza cargado.'));
+  add('cel', 'Celular que parece incompleto', 'Tiene menos de 8 dígitos, WhatsApp no lo va a poder abrir.',
+    de(act.filter((p) => p.celular && p.celular.replace(/\D/g, '').length < 8), (p) => `El celular «${p.celular}» tiene solo ${p.celular.replace(/\D/g, '').length} dígitos.`));
+  add('mail', 'E-mail que parece incompleto', 'Le falta la arroba o el dominio.',
+    de(act.filter((p) => p.email && !/^\S+@\S+\.\S+$/.test(p.email)), (p) => `El e-mail «${p.email}» no parece completo.`));
   return g;
 }
-function secRev() {
+function renderRev() {
   const g = revisar();
-  if (!g.length) return '<div class="rev-ok">Todo en orden: no encontré nada raro en tus pólizas.</div>';
-  const total = g.reduce((a, x) => a + x.ids.length, 0);
-  return `<p class="sub" style="margin:0 0 14px">Encontré <b>${g.length} tema${g.length === 1 ? '' : 's'}</b> para revisar (${total} póliza${total === 1 ? '' : 's'}). No se cambia nada solo: tocá «Abrir» para ver cada una y corregirla.</p>`
-    + g.map((x) => `<details class="rev-g"><summary><span class="t">${esc(x.titulo)}</span><span class="c">${x.ids.length}</span>${icon('chev-down', 'chev')}</summary>
-      <div class="rev-cuerpo">${x.desc ? `<p>${esc(x.desc)}</p>` : ''}${x.ids.slice(0, 40).map((id) => {
-        const p = S.polizas.find((z) => z.id === id);
-        return `<div class="rev-item"><span><b>${esc(nombre(p))}</b> <small>${[p.patente, p.compania, p.nro_poliza && 'póliza ' + p.nro_poliza].filter(Boolean).map(esc).join(' · ')}</small></span><button type="button" class="btn" data-rev-abrir="${id}">Abrir</button></div>`;
-      }).join('')}${x.ids.length > 40 ? `<p style="margin-top:8px">… y ${x.ids.length - 40} más.</p>` : ''}</div></details>`).join('');
+  const cont = $('#rev-body');
+  if (!g.length) { cont.innerHTML = '<div class="rev-ok">Todo en orden: no encontré nada raro en tus pólizas.</div>'; return; }
+  const total = new Set(g.flatMap((x) => x.ids)).size;
+  const info = (p) => [p.patente, p.compania, p.nro_poliza && 'póliza ' + p.nro_poliza].filter(Boolean).map(esc).join(' · ');
+  cont.innerHTML = `<p class="sub" style="margin:0 0 14px">Encontré <b>${g.length} tema${g.length === 1 ? '' : 's'}</b> para revisar (${total} póliza${total === 1 ? '' : 's'}). Cada una dice por qué está acá. Tocá «Abrir» para corregirla.</p>`
+    + g.map((x) => `<details class="rev-g" open><summary><span class="t">${esc(x.titulo)}</span><span class="c">${x.items.length}</span>${icon('chev-down', 'chev')}</summary>
+      <div class="rev-cuerpo">${x.desc ? `<p>${esc(x.desc)}</p>` : ''}${x.items.slice(0, 40).map((it) => {
+        const p = S.polizas.find((z) => z.id === it.id);
+        return `<div class="rev-item"><div class="rev-t"><span><b>${esc(nombre(p))}</b> <small>${info(p)}</small></span>
+          <p class="rev-m">${esc(it.motivo)}</p>
+          ${(it.otros || []).slice(0, 4).map((o) => `<p class="rev-o">Se parece a <button type="button" class="link" data-rev-abrir="${o.id}">${esc(nombre(o))}</button> <small>${info(o)}</small></p>`).join('')}</div>
+          <button type="button" class="btn" data-rev-abrir="${it.id}">Abrir</button></div>`;
+      }).join('')}${x.items.length > 40 ? `<p style="margin-top:8px">… y ${x.items.length - 40} más.</p>` : ''}</div></details>`).join('');
 }
+
 function renderConfig() {
   const sec = SECCIONES[S.cfgSec] ? S.cfgSec : 'wa';
   S.cfgSec = sec;
   $$('.cfg-nav [data-sec]').forEach((b) => b.setAttribute('aria-current', String(b.dataset.sec === sec)));
   $('#cfg-sec-titulo').textContent = SECCIONES[sec];
-  $('#cfg-body').innerHTML = { wa: secWA, resp: secResp, arch: secArch, pap: secPap, rev: secRev, prog: secProg }[sec]();
-  const nP = S.papelera.length, nR = revisar().length;
+  $('#cfg-body').innerHTML = { wa: secWA, resp: secResp, arch: secArch, pap: secPap, prog: secProg }[sec]();
+  const nP = S.papelera.length;
   $('.cfg-nav [data-sec="pap"] small').textContent = nP ? `${nP} eliminada${nP === 1 ? '' : 's'}` : 'Vacía';
-  $('.cfg-nav [data-sec="rev"] small').textContent = nR ? `${nR} tema${nR === 1 ? '' : 's'} para revisar` : 'Todo en orden';
   $('#cfg-body').scrollTop = 0;
 }
 function abrirConfig(sec) {
@@ -1245,11 +1395,13 @@ function abrirAlertas() {
   if (!lista.length) return;
   const n = lista.length;
   $('#al-sub').textContent = `${n} póliza${n === 1 ? ' vencida o que vence' : 's vencidas o que vencen'} en ${ALERTA} días o menos.`;
-  $('#al-list').innerHTML = lista.slice(0, 40).map((p) => `<li class="al-item">
+  $('#al-list').innerHTML = lista.slice(0, 4).map((p) => `<li class="al-item">
       <span class="st ${p.est.k}">${esc(p.est.t)}</span>
       <div><div class="name">${esc(nombre(p))}</div><div class="meta">${[p.patente, p.compania, p.nro_poliza && 'póliza ' + p.nro_poliza].filter(Boolean).map(esc).join(' · ')}</div></div>
-      <span class="num muted">${fmtFecha(p.vig_fin)}</span></li>`).join('')
-    + (n > 40 ? `<li class="al-item"><span></span><span class="muted">… y ${n - 40} más en Vencimientos.</span><span></span></li>` : '');
+      <span class="num muted">${fmtFecha(p.vig_fin)}</span></li>`).join('');
+  const mas = $('#al-mas');
+  mas.hidden = n <= 4;
+  mas.textContent = `Ver ${n - 4} más`;
   $('#dlg-alertas').showModal();
 }
 
@@ -1304,12 +1456,12 @@ function ubicarMenu(menu, btn) {
   menu.style.left = `${Math.max(12, Math.round(Math.min(r.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 12)))}px`;
 }
 function menuMas() {
-  const vis = new Set(columnasPol().map((c) => c.k));
+  const vis = new Set(columnasPol(false).map((c) => c.k));
   $('#menu-mas').innerHTML = `<button type="button" data-mas="importar"><b>Importar desde Excel</b><span>Suma pólizas nuevas sin duplicar</span></button>
     <button type="button" data-mas="actualizar"><b>Buscar actualizaciones</b><span>Necesita internet; el resto del programa no</span></button><hr>
     <p class="menu-title">Columnas de la tabla</p>`
     + COLS.filter((c) => c.k !== 'estado').map((c) => `<label><input type="checkbox" data-col="${c.k}" ${vis.has(c.k) ? 'checked' : ''}><span>${esc(c.t)}</span></label>`).join('')
-    + '<p class="menu-note">E-mail, Celular y MIOS aparecen solos cuando tienen datos.</p>';
+    + '<p class="menu-note">E-mail, Celular y MIOS aparecen solos cuando tienen datos. Si una columna no entra en la pantalla, se esconde sola.</p>';
 }
 
 /* ---------- Eventos ---------- */
@@ -1368,6 +1520,16 @@ function eventos() {
     render();
   });
 
+  // resumen de cartera: tocar un estado filtra la lista
+  $$('#kpis .kpi').forEach((b) => b.addEventListener('click', () => { S.estado = S.estado === b.dataset.kpi ? '' : b.dataset.kpi; render(); }));
+  // paginadores
+  $('#pager-pol-ant').addEventListener('click', () => { PAG.p--; renderPolizas(contar()); });
+  $('#pager-pol-sig').addEventListener('click', () => { PAG.p++; renderPolizas(contar()); });
+  $('#pager-venc-ant').addEventListener('click', () => { PAG.v--; renderVenc(contar()); });
+  $('#pager-venc-sig').addEventListener('click', () => { PAG.v++; renderVenc(contar()); });
+  // revisar datos
+  $('#rev-body').addEventListener('click', (e) => { const ra = e.target.closest('[data-rev-abrir]'); if (ra) abrirFicha(Number(ra.dataset.revAbrir)); });
+
   // vencimientos
   $$('#v-views button').forEach((b) => b.addEventListener('click', () => { S.vsub = b.dataset.vsub; S.vsubElegido = true; S.dia = null; render(); }));
   $('#cal-grid').addEventListener('click', (e) => {
@@ -1393,6 +1555,12 @@ function eventos() {
 
   // ficha de lectura
   $('#fi-x').addEventListener('click', () => $('#dlg-ficha').close());
+  $('#fi-tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) { S.fichaTab = b.dataset.tab; pintarTabs(); $('#fi-body').scrollTop = 0; } });
+  $('#pv-x').addEventListener('click', () => $('#dlg-prev').close());
+  $('#pv-ant').addEventListener('click', () => { prevI = (prevI - 1 + prevLista.length) % prevLista.length; pintarPrev(); });
+  $('#pv-sig').addEventListener('click', () => { prevI = (prevI + 1) % prevLista.length; pintarPrev(); });
+  $('#pv-abrir').addEventListener('click', async () => { try { await api('/api/adjuntos/abrir', { id: prevLista[prevI].id }); } catch (er) { falla(er); } });
+  $('#pv-carpeta').addEventListener('click', async () => { try { await api('/api/adjuntos/carpeta', { id: prevLista[prevI].id }); } catch (er) { falla(er); } });
   $('#fi-edit').addEventListener('click', () => { const id = S.fichaId; $('#dlg-ficha').close(); abrirForm(id); });
   $('#fi-del').addEventListener('click', () => eliminar(S.fichaId));
   $('#fi-anular').addEventListener('click', () => abrirAnular(S.fichaId));
@@ -1421,7 +1589,9 @@ function eventos() {
 
   // aviso inicial
   $('#al-close').addEventListener('click', () => $('#dlg-alertas').close());
-  $('#al-ver').addEventListener('click', () => { S.vsub = 'alertas'; S.vsubElegido = true; S.dia = null; $('#dlg-alertas').close(); irA('venc'); });
+  const verAlertas = () => { S.vsub = 'alertas'; S.vsubElegido = true; S.dia = null; PAG.v = 0; $('#dlg-alertas').close(); irA('venc'); };
+  $('#al-ver').addEventListener('click', verAlertas);
+  $('#al-mas').addEventListener('click', verAlertas);
 
   // menús
   [['#btn-export', '#menu-export'], ['#btn-mas', '#menu-mas']].forEach(([b, m]) => {
@@ -1444,7 +1614,7 @@ function eventos() {
   });
   $('#menu-mas').addEventListener('change', (e) => {
     const c = e.target.closest('[data-col]'); if (!c) return;
-    const actual = Object.fromEntries(COLS.filter((x) => x.k !== 'estado').map((x) => [x.k, columnasPol().some((v) => v.k === x.k)]));
+    const actual = Object.fromEntries(COLS.filter((x) => x.k !== 'estado').map((x) => [x.k, columnasPol(false).some((v) => v.k === x.k)]));
     actual[c.dataset.col] = c.checked;
     S.cols = actual;
     store.set('cols3', S.cols);
@@ -1454,7 +1624,14 @@ function eventos() {
 
   // ancho útil de la tabla (para que los encabezados de grupo no se corran al desplazar)
   const wrap = $('#wrap-pol');
-  const medir = () => wrap.style.setProperty('--wrap-w', `${wrap.clientWidth}px`);
+  let pendiente = null;
+  const medir = () => {
+    wrap.style.setProperty('--wrap-w', `${wrap.clientWidth}px`);
+    if (Math.abs(wrap.clientWidth - S.anchoPol) < 8) return;
+    S.anchoPol = wrap.clientWidth;
+    clearTimeout(pendiente);
+    pendiente = setTimeout(() => { if (S.cargado && S.page === 'polizas') renderPolizas(contar()); }, 120);
+  };
   new ResizeObserver(medir).observe(wrap);
   medir();
 
@@ -1473,6 +1650,8 @@ function eventos() {
 /* ---------- Inicio ---------- */
 (async function init() {
   eventos();
+  eventosRail();
+  aplicarRail();
   irA('polizas');
   try {
     await cargar();

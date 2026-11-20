@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<meta name="theme-color" content="#111412">
+<meta name="theme-color" content="#080807">
 <meta name="token" content="__TOKEN__">
 <meta name="alerta-dias" content="__ALERTA__">
-<title>Gestor de Seguros</title>
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="preload" href="/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<title>Siner</title>
+<link rel="icon" href="/favicon.png" type="image/png">
+<link rel="preload" href="/fonts/inter-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/app.css">
 <script src="/app.js" defer></script>
 </head>
@@ -36,30 +36,44 @@
     <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21.4 11-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6l7-3z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></symbol>
+    <symbol id="i-checklist" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></symbol>
+    <symbol id="i-building" viewBox="0 0 24 24"><path d="M4 21V4h10v17M14 9h6v12M8 8h2M8 12h2M8 16h2M2 21h20"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M19 7h1M4 17h1M11 17h9"/><circle cx="16" cy="7" r="2.5"/><circle cx="8" cy="17" r="2.5"/></symbol>
     <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V5M7 9l5-5 5 5M5 20h14"/></symbol>
   </defs>
 </svg>
 
-<div class="app">
+<div class="app" id="app">
+
+  <!-- ============ Cabecera: solo el logo y el estado (no depende del panel) ============ -->
+  <header class="top">
+    <button type="button" class="brand" id="brand" aria-label="Siner, ir a Pólizas"><img class="s" src="/logo-s.png" alt=""><img class="t" src="/logo-texto.png" alt="Siner"></button>
+    <span class="top-estado" id="top-estado">Todo guardado en este equipo</span>
+    <button type="button" class="link upd" id="btn-update" hidden></button>
+  </header>
+
+  <div class="body">
+  <!-- ============ Panel lateral: se esconde y se agranda con el mouse ============ -->
+  <aside class="rail" id="rail" aria-label="Menú">
+    <button type="button" class="rail-btn" id="rail-toggle" aria-label="Ocultar panel" aria-expanded="true"><span class="ri"><svg class="ic"><use href="#i-panel"/></svg></span><span class="rt" id="rail-toggle-t">Ocultar panel</span></button>
+    <span class="rail-label">MENÚ</span>
+    <nav class="nav" aria-label="Secciones">
+      <button type="button" data-page="polizas" aria-label="Pólizas"><span class="ri"><svg class="ic"><use href="#i-shield"/></svg></span><span class="rt">Pólizas</span></button>
+      <button type="button" data-page="venc" aria-label="Vencimientos"><span class="ri"><svg class="ic"><use href="#i-calendar"/></svg></span><span class="rt">Vencimientos</span><b class="nav-n" id="nav-n" hidden>0</b></button>
+      <button type="button" data-page="anul" aria-label="Anuladas"><span class="ri"><svg class="ic"><use href="#i-ban"/></svg></span><span class="rt">Anuladas</span><b class="nav-n quiet" id="nav-a" hidden>0</b></button>
+      <button type="button" data-page="rev" aria-label="Revisar datos"><span class="ri"><svg class="ic"><use href="#i-checklist"/></svg></span><span class="rt">Revisar datos</span><b class="nav-n blanco" id="nav-r" hidden>0</b></button>
+      <button type="button" data-page="comp" aria-label="Compañías"><span class="ri"><svg class="ic"><use href="#i-building"/></svg></span><span class="rt">Compañías</span></button>
+    </nav>
+    <span class="rail-sp"></span>
+    <button type="button" class="rail-btn" id="btn-config" aria-label="Configuración" title="Configuración"><span class="ri"><svg class="ic"><use href="#i-sliders"/></svg></span><span class="rt">Configuración</span></button>
+    <div class="grip" id="grip" role="separator" aria-orientation="vertical" aria-label="Cambiar el ancho del panel"></div>
+  </aside>
 
   <!-- ============ Cabecera: marca + secciones + acción principal ============ -->
-  <header class="top">
-    <div class="wrap top-in">
-      <div class="brand">
-        <svg class="seal" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="17.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="20" cy="20" r="13" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="1.6 2.4"/><path d="m13.5 20.5 4.5 4.5 8.5-9.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <span>Gestor de Seguros</span>
-      </div>
-      <nav class="nav" aria-label="Secciones">
-        <button type="button" data-page="polizas">Pólizas</button>
-        <button type="button" data-page="venc">Vencimientos <b class="nav-n" id="nav-n" hidden>0</b></button>
-        <button type="button" data-page="anul">Anuladas <b class="nav-n quiet" id="nav-a" hidden>0</b></button>
-        <button type="button" data-page="comp">Compañías</button>
-      </nav>
-      <button type="button" class="link upd" id="btn-update" hidden></button>
-      <button type="button" class="icon-btn gear" id="btn-config" aria-label="Configuración" title="Configuración"><svg class="ic"><use href="#i-gear"/></svg></button>
-      <button type="button" class="btn solid" id="btn-nueva"><svg class="ic"><use href="#i-plus"/></svg>Nueva póliza</button>
-    </div>
-  </header>
+  
 
   <main class="main">
     <div class="wrap">
@@ -68,20 +82,34 @@
       <section class="page" id="page-polizas" aria-labelledby="h-pol">
         <div class="page-head">
           <div class="ph-title">
+            <span class="eyebrow">Cartera</span>
             <h1 id="h-pol">Pólizas</h1>
             <p class="sub" id="pol-sub"></p>
-          </div>
-          <div class="search" role="search">
-            <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
-            <label class="sr-only" for="q">Buscar por patente, asegurado o número de póliza</label>
-            <input id="q" type="search" placeholder="Buscar por nombre, patente, póliza, teléfono, marca…" autocomplete="off" spellcheck="false">
-            <button type="button" class="ghost-x" id="q-clear" aria-label="Limpiar búsqueda" hidden><svg class="ic"><use href="#i-x"/></svg></button>
           </div>
           <div class="head-actions">
             <button type="button" class="btn" id="btn-export" aria-haspopup="true" aria-expanded="false" commandfor="menu-export" command="toggle-popover"><svg class="ic"><use href="#i-download"/></svg>Exportar<svg class="ic sm"><use href="#i-chev-down"/></svg></button>
             <button type="button" class="btn icon-only" id="btn-mas" aria-label="Más opciones" aria-haspopup="true" aria-expanded="false" commandfor="menu-mas" command="toggle-popover"><svg class="ic"><use href="#i-more"/></svg></button>
             <input type="file" id="file-import" accept=".xlsx,.xlsm" hidden>
           </div>
+        </div>
+
+        <div class="kpis" id="kpis">
+          <div class="kpi-row">
+            <button type="button" class="kpi v" data-kpi="vencida" aria-pressed="false"><span class="kpi-t">Vencidas</span><b id="kpi-v">0</b><small>Ya pasaron: hay que renovarlas</small></button>
+            <button type="button" class="kpi p" data-kpi="porvencer" aria-pressed="false"><span class="kpi-t">Por vencer</span><b id="kpi-p">0</b><small>Vencen en los próximos <span class="alerta-dias"></span> días</small></button>
+            <button type="button" class="kpi g" data-kpi="vigente" aria-pressed="false"><span class="kpi-t">Vigentes</span><b id="kpi-g">0</b><small>Al día, sin nada que hacer</small></button>
+          </div>
+          <div class="kpi-bar" id="kpi-bar" aria-hidden="true"></div>
+        </div>
+
+        <div class="barra-pol">
+          <div class="search" role="search">
+            <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+            <label class="sr-only" for="q">Buscar por patente, asegurado o número de póliza</label>
+            <input id="q" type="search" placeholder="Buscar por nombre, patente, póliza, teléfono, marca…" autocomplete="off" spellcheck="false">
+            <button type="button" class="ghost-x" id="q-clear" aria-label="Limpiar búsqueda" hidden><svg class="ic"><use href="#i-x"/></svg></button>
+          </div>
+          <button type="button" class="btn solid cut" id="btn-nueva"><svg class="ic"><use href="#i-plus"/></svg>Nueva póliza</button>
         </div>
 
         <div class="filters">
@@ -100,7 +128,6 @@
               <option value="vencida">Vencidas</option>
             </select></label>
           <button type="button" class="link" id="f-limpiar" hidden>Quitar filtros</button>
-          <p class="notice" id="notice" hidden><span id="notice-t"></span><button type="button" class="link" data-ir="venc">Ver vencimientos</button></p>
         </div>
 
         <div class="table-card">
@@ -113,12 +140,17 @@
             <div class="empty" id="empty-pol" hidden></div>
           </div>
         </div>
+        <div class="pager" id="pager-pol" hidden>
+          <span id="pager-pol-t"></span>
+          <span class="pager-ctl"><button type="button" class="icon-btn" id="pager-pol-ant" aria-label="Página anterior"><svg class="ic"><use href="#i-chev-left"/></svg></button><span class="pager-pos" id="pager-pol-pos"></span><button type="button" class="icon-btn" id="pager-pol-sig" aria-label="Página siguiente"><svg class="ic"><use href="#i-chev-right"/></svg></button></span>
+        </div>
       </section>
 
       <!-- ================= SECCIÓN 2: VENCIMIENTOS ================= -->
       <section class="page scroll" id="page-venc" aria-labelledby="h-venc" hidden>
         <div class="page-head">
           <div>
+            <span class="eyebrow">Agenda</span>
             <h1 id="h-venc">Vencimientos</h1>
             <p class="sub">La alerta salta <span class="alerta-dias"></span> días antes del fin de vigencia.</p>
           </div>
@@ -163,6 +195,10 @@
                 <div class="empty" id="empty-venc" hidden></div>
               </div>
             </div>
+            <div class="pager" id="pager-venc" hidden>
+              <span id="pager-venc-t"></span>
+              <span class="pager-ctl"><button type="button" class="icon-btn" id="pager-venc-ant" aria-label="Página anterior"><svg class="ic"><use href="#i-chev-left"/></svg></button><span class="pager-pos" id="pager-venc-pos"></span><button type="button" class="icon-btn" id="pager-venc-sig" aria-label="Página siguiente"><svg class="ic"><use href="#i-chev-right"/></svg></button></span>
+            </div>
           </div>
         </div>
       </section>
@@ -171,6 +207,7 @@
       <section class="page" id="page-anul" aria-labelledby="h-anul" hidden>
         <div class="page-head">
           <div class="ph-title">
+            <span class="eyebrow">Archivo</span>
             <h1 id="h-anul">Anuladas</h1>
             <p class="sub" id="anul-sub"></p>
           </div>
@@ -196,10 +233,23 @@
         </div>
       </section>
 
+      <!-- ================= SECCIÓN: REVISAR DATOS ================= -->
+      <section class="page scroll" id="page-rev" aria-labelledby="h-rev" hidden>
+        <div class="page-head">
+          <div>
+            <span class="eyebrow">Calidad</span>
+            <h1 id="h-rev">Revisar datos</h1>
+            <p class="sub">Busca cosas raras en tus pólizas: repetidas, sin fecha, fechas al revés. No cambia nada solo: abrís cada una y la corregís.</p>
+          </div>
+        </div>
+        <div class="rev-page" id="rev-body"></div>
+      </section>
+
       <!-- ================= SECCIÓN 3: COMPAÑÍAS ================= -->
       <section class="page scroll" id="page-comp" aria-labelledby="h-comp" hidden>
         <div class="page-head">
           <div>
+            <span class="eyebrow">Catálogo</span>
             <h1 id="h-comp">Compañías</h1>
             <p class="sub">Las compañías que figuran al cargar una póliza. Podés agregar, renombrar o quitar.</p>
           </div>
@@ -225,6 +275,7 @@
 
     </div>
   </main>
+  </div>
 
   <footer class="foot">
     <div class="wrap"><p id="msg" role="status" aria-live="polite"></p><span class="ver" id="ver"></span></div>
@@ -239,24 +290,54 @@
 </div>
 <div class="menu" id="menu-mas" popover="auto" aria-label="Más opciones"></div>
 
-<!-- Ficha: SOLO LECTURA -->
-<dialog class="drawer" id="dlg-ficha" aria-labelledby="fi-nombre" closedby="any">
-  <div class="drawer-head">
-    <div>
+<!-- Ficha: tarjeta flotante con pestañas -->
+<dialog class="ficha" id="dlg-ficha" aria-labelledby="fi-nombre" closedby="any">
+  <div class="fi-wrap">
+    <aside class="fi-left">
+      <div class="fi-left-top"><span class="fi-tag">FICHA</span><button type="button" class="icon-btn" id="fi-x" aria-label="Cerrar"><svg class="ic"><use href="#i-x"/></svg></button></div>
+      <div class="fi-mono" id="fi-mono" aria-hidden="true"></div>
+      <div>
+        <h2 id="fi-nombre"></h2>
+        <p class="sub" id="fi-sub"></p>
+      </div>
       <p class="fi-estado" id="fi-estado"></p>
-      <h2 id="fi-nombre"></h2>
-      <p class="sub" id="fi-sub"></p>
+      <div class="fi-vig" id="fi-vig"></div>
+      <span class="fi-sp"></span>
+      <div class="fi-btns">
+        <div id="fi-der" class="fi-btns">
+          <button type="button" class="btn solid" id="fi-renovar"><svg class="ic"><use href="#i-refresh"/></svg>Renovar</button>
+          <button type="button" class="btn blanco" id="fi-edit"><svg class="ic"><use href="#i-pencil"/></svg>Editar datos</button>
+        </div>
+        <button type="button" class="btn solid" id="fi-react" hidden><svg class="ic"><use href="#i-undo"/></svg>Reactivar póliza</button>
+        <div class="fi-acc2">
+          <button type="button" class="link-btn" id="fi-anular">Anular</button>
+          <button type="button" class="link-btn mal" id="fi-del">Eliminar</button>
+        </div>
+      </div>
+    </aside>
+    <div class="fi-right">
+      <div class="tabs" id="fi-tabs" role="tablist" aria-label="Secciones de la ficha">
+        <button type="button" role="tab" data-tab="datos" aria-selected="true">Datos</button>
+        <button type="button" role="tab" data-tab="arch" aria-selected="false">Archivos <b class="tab-n" id="fi-tab-arch-n" hidden></b></button>
+        <button type="button" role="tab" data-tab="hist" aria-selected="false">Historial</button>
+      </div>
+      <div class="drawer-body" id="fi-body"></div>
     </div>
-    <button type="button" class="icon-btn" id="fi-x" aria-label="Cerrar"><svg class="ic"><use href="#i-x"/></svg></button>
   </div>
-  <div class="drawer-body" id="fi-body"></div>
-  <div class="drawer-foot">
-    <div class="fi-acc">
-      <button type="button" class="btn quiet-danger" id="fi-del"><svg class="ic"><use href="#i-trash"/></svg>Eliminar</button>
-      <button type="button" class="btn" id="fi-anular"><svg class="ic"><use href="#i-ban"/></svg>Anular</button>
-    </div>
-    <div class="fi-acc" id="fi-der"><button type="button" class="btn" id="fi-edit"><svg class="ic"><use href="#i-pencil"/></svg>Editar</button><button type="button" class="btn solid" id="fi-renovar" autofocus><svg class="ic"><use href="#i-refresh"/></svg>Renovar</button></div>
-    <button type="button" class="btn solid" id="fi-react" hidden><svg class="ic"><use href="#i-undo"/></svg>Reactivar póliza</button>
+</dialog>
+
+<!-- Vista previa de un archivo adjunto -->
+<dialog class="prev" id="dlg-prev" aria-labelledby="pv-nombre" closedby="any">
+  <div class="pv-head">
+    <div class="pv-t"><b id="pv-nombre"></b><small id="pv-sub"></small></div>
+    <button type="button" class="icon-btn" id="pv-ant" aria-label="Archivo anterior"><svg class="ic"><use href="#i-chev-left"/></svg></button>
+    <button type="button" class="icon-btn" id="pv-sig" aria-label="Archivo siguiente"><svg class="ic"><use href="#i-chev-right"/></svg></button>
+    <button type="button" class="icon-btn" id="pv-x" autofocus aria-label="Cerrar la vista previa"><svg class="ic"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="pv-body" id="pv-body"></div>
+  <div class="pv-foot">
+    <button type="button" class="btn" id="pv-carpeta"><svg class="ic"><use href="#i-folder"/></svg>Mostrar en la carpeta</button>
+    <button type="button" class="btn solid" id="pv-abrir">Abrir con otro programa</button>
   </div>
 </dialog>
 
@@ -380,7 +461,6 @@
       <button type="button" data-sec="resp"><b>Copia de seguridad</b><small>Proteger tus datos</small></button>
       <button type="button" data-sec="arch"><b>Archivos adjuntos</b><small>Dónde se guardan</small></button>
       <button type="button" data-sec="pap"><b>Papelera</b><small>Pólizas eliminadas</small></button>
-      <button type="button" data-sec="rev"><b>Revisar datos</b><small>Errores y datos raros</small></button>
       <button type="button" data-sec="prog"><b>Programa</b><small>Versión y actualizaciones</small></button>
       <p class="cfg-estado" id="cfg-estado">Los cambios se guardan solos.</p>
     </nav>
@@ -422,9 +502,10 @@
   <h2 id="al-title">Vencimientos próximos</h2>
   <p id="al-sub"></p>
   <ul class="al-list" id="al-list"></ul>
+  <button type="button" class="btn" id="al-mas" hidden style="margin-top:14px"></button>
   <div class="modal-actions">
     <button type="button" class="btn" id="al-close" autofocus>Cerrar</button>
-    <button type="button" class="btn solid" id="al-ver">Ver vencimientos</button>
+    <button type="button" class="btn solid" id="al-ver">Ver vencidas y por vencer</button>
   </div>
 </dialog>
 

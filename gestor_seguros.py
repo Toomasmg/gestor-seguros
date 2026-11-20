@@ -20,15 +20,17 @@ import tempfile
 import webbrowser
 from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, quote, urlparse
 
 ALERTA_DIAS = 12
-APP_TITLE = "Gestor de Seguros"
+APP_TITLE = "Siner"
 APP_DIR = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
            else os.path.dirname(os.path.abspath(__file__)))
 RES_DIR = getattr(sys, "_MEIPASS", APP_DIR)
 WEB_DIR = os.path.join(RES_DIR, "web")
 STATIC = {"/app.css": "text/css; charset=utf-8", "/app.js": "text/javascript; charset=utf-8",
-          "/favicon.svg": "image/svg+xml"}
+          "/favicon.svg": "image/svg+xml", "/favicon.png": "image/png",
+          "/logo-s.png": "image/png", "/logo-texto.png": "image/png"}
 
 CAMPOS = ["nro_poliza", "asegurado", "patente", "tipo", "marca", "modelo", "email", "celular",
           "compania", "vig_inicio", "vig_fin", "mios", "trato"]
@@ -56,7 +58,7 @@ def resolver_db():
 
 
 DB_PATH = resolver_db()
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.5.0"
 REPO = "Toomasmg/gestor-seguros"
 UPDATE = {"comprobado": False, "disponible": False, "version": "", "url": "", "sha": "", "tam": 0, "notas": "", "error": ""}
 VENTANA = None
@@ -991,6 +993,33 @@ class Handler(BaseHTTPRequestHandler):
             if os.path.isfile(ruta_f):
                 with open(ruta_f, "rb") as f:
                     return self._send(200, f.read(), "font/woff2", {"Cache-Control": "max-age=86400"})
+        mm = re.fullmatch(r"/adjunto/(\d+)", ruta)
+        if mm:                                              # vista previa de un archivo adjunto (imágenes y PDF)
+            q = parse_qs(urlparse(self.path).query)
+            if not secrets.compare_digest(q.get("t", [""])[0], TOKEN):
+                return self._err("No autorizado", 403)
+            adj = db.adjunto_get(int(mm.group(1)))
+            ruta_f = _ruta_adjunto(adj["archivo"]) if adj else None
+            if not ruta_f or not os.path.isfile(ruta_f):
+                return self._err("No se encontró el archivo.", 404)
+            mime = mimetypes.guess_type(adj["nombre"])[0] or "application/octet-stream"
+            seguro = (mime.startswith("image/") and mime != "image/svg+xml") or mime == "application/pdf"
+            self.send_response(200)
+            self.send_header("Content-Type", mime if seguro else "application/octet-stream")
+            self.send_header("Content-Length", str(os.path.getsize(ruta_f)))
+            self.send_header("Content-Disposition", ("inline" if seguro else "attachment") + "; filename*=UTF-8''" + quote(adj["nombre"]))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cache-Control", "private, max-age=60")
+            if mime != "application/pdf":
+                self.send_header("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox")
+            self.end_headers()
+            with open(ruta_f, "rb") as f:
+                while True:
+                    trozo = f.read(262144)
+                    if not trozo:
+                        break
+                    self.wfile.write(trozo)
+            return
         if ruta == "/api/state":
             if not self._auth():
                 return
@@ -1158,15 +1187,16 @@ def comprobar_actualizacion():
             UPDATE.update(disponible=False)
             return
         activos = {a.get("name"): a for a in info.get("assets", [])}
-        exe = activos.get("GestorSeguros.exe")
+        nombre_exe = "Siner.exe" if "Siner.exe" in activos else "GestorSeguros.exe"   # las versiones viejas publicaban «GestorSeguros.exe»
+        exe = activos.get(nombre_exe)
         if not exe:
             return
         url = exe.get("browser_download_url", "")
         if not url.startswith(f"https://github.com/{REPO}/releases/download/"):
             return
         sha = (exe.get("digest") or "").removeprefix("sha256:").strip().lower()
-        if not sha and "GestorSeguros.exe.sha256" in activos:
-            with urllib.request.urlopen(activos["GestorSeguros.exe.sha256"]["browser_download_url"], timeout=6) as r:
+        if not sha and nombre_exe + ".sha256" in activos:
+            with urllib.request.urlopen(activos[nombre_exe + ".sha256"]["browser_download_url"], timeout=6) as r:
                 sha = r.read().decode("utf-8").split()[0].strip().lower()
         UPDATE.update(disponible=bool(sha), version=tag.lstrip("v"), url=url, sha=sha,
                       tam=int(exe.get("size") or 0), notas=(info.get("body") or "")[:600])
@@ -1189,7 +1219,7 @@ def aplicar_actualizacion():
         return False, "Solo se puede actualizar el programa instalado (.exe)."
     if not (UPDATE.get("disponible") and UPDATE.get("sha")):
         return False, "No hay una actualización verificable disponible."
-    destino = os.path.join(APP_DIR, "GestorSeguros.nuevo.exe")
+    destino = os.path.join(APP_DIR, "Siner.nuevo.exe")
     h = hashlib.sha256()
     try:
         req = urllib.request.Request(UPDATE["url"], headers={"User-Agent": "GestorSeguros-actualizador"})

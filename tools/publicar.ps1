@@ -29,16 +29,21 @@ $tmp = Join-Path $env:TEMP "gestor_seguros_release"
 if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
 git clone --quiet . $tmp
 Push-Location $tmp
-python -m PyInstaller --noconfirm --onefile --windowed --name GestorSeguros --icon web_icon.ico `
+python -m PyInstaller --noconfirm --onefile --windowed --name Siner --icon web_icon.ico `
     --add-data "web;web" --exclude-module tkinter --exclude-module tkcalendar --exclude-module babel gestor_seguros.py
 Pop-Location
 
-$exe = Join-Path $tmp "dist\GestorSeguros.exe"
+$exe = Join-Path $tmp "dist\Siner.exe"
 if (-not (Test-Path $exe)) { throw "No se generó el .exe" }
+# Las instalaciones viejas buscan un archivo llamado GestorSeguros.exe: se sube también con ese nombre.
+$exeViejo = Join-Path $tmp "dist\GestorSeguros.exe"
+Copy-Item $exe $exeViejo
 $sha = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
-$shaArchivo = Join-Path $tmp "dist\GestorSeguros.exe.sha256"
-"$sha  GestorSeguros.exe" | Set-Content -Encoding ASCII $shaArchivo
+$shaArchivo = Join-Path $tmp "dist\Siner.exe.sha256"
+$shaViejo = Join-Path $tmp "dist\GestorSeguros.exe.sha256"
+"$sha  Siner.exe" | Set-Content -Encoding ASCII $shaArchivo
+"$sha  GestorSeguros.exe" | Set-Content -Encoding ASCII $shaViejo
 
 if (-not $Notas) { $Notas = "Versión $Version" }
-gh release create "v$Version" $exe $shaArchivo --repo $repo --title "Versión $Version" --notes $Notas
+gh release create "v$Version" $exe $shaArchivo $exeViejo $shaViejo --repo $repo --title "Versión $Version" --notes $Notas
 Write-Host "Publicado v$Version  (sha256 $sha)"
